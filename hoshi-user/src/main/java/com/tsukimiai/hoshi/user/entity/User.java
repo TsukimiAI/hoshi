@@ -18,9 +18,15 @@ public class User {
 
     private String passwordHash;
 
-    private String nickname;
+    private String avatarUrl;
 
     private Integer status;
+
+    private Integer emailVerified;
+
+    private LocalDateTime emailVerifiedAt;
+
+    private LocalDateTime lastLoginAt;
 
     private LocalDateTime createdAt;
 
@@ -58,12 +64,12 @@ public class User {
         this.passwordHash = passwordHash;
     }
 
-    public String getNickname() {
-        return nickname;
+    public String getAvatarUrl() {
+        return avatarUrl;
     }
 
-    public void setNickname(String nickname) {
-        this.nickname = nickname;
+    public void setAvatarUrl(String avatarUrl) {
+        this.avatarUrl = avatarUrl;
     }
 
     public Integer getStatus() {
@@ -72,6 +78,30 @@ public class User {
 
     public void setStatus(Integer status) {
         this.status = status;
+    }
+
+    public Integer getEmailVerified() {
+        return emailVerified;
+    }
+
+    public void setEmailVerified(Integer emailVerified) {
+        this.emailVerified = emailVerified;
+    }
+
+    public LocalDateTime getEmailVerifiedAt() {
+        return emailVerifiedAt;
+    }
+
+    public void setEmailVerifiedAt(LocalDateTime emailVerifiedAt) {
+        this.emailVerifiedAt = emailVerifiedAt;
+    }
+
+    public LocalDateTime getLastLoginAt() {
+        return lastLoginAt;
+    }
+
+    public void setLastLoginAt(LocalDateTime lastLoginAt) {
+        this.lastLoginAt = lastLoginAt;
     }
 
     public LocalDateTime getCreatedAt() {
@@ -88,6 +118,10 @@ public class User {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public boolean hasVerifiedEmail() {
+        return emailVerified != null && emailVerified == 1;
     }
 
 }

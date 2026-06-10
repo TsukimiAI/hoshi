@@ -11,7 +11,7 @@ public class HoshiWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        session.sendMessage(new TextMessage("{\"type\":\"ready\",\"emotion\":\"IDLE\"}"));
+        session.sendMessage(new TextMessage("{\"type\":\"ready\",\"emotion\":\"正常\"}"));
     }
 
     @Override

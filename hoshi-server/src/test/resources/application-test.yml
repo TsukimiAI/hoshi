@@ -9,8 +9,13 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
+      - org.springframework.boot.mail.autoconfigure.MailSenderAutoConfiguration
 
 hoshi:
+  mail:
+    enabled: false
+  app:
+    public-url: http://localhost:5173
   security:
     jwt:
       secret: test-secret-key-for-unit-tests-at-least-256-bits-long

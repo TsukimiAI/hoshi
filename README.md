@@ -16,7 +16,8 @@ hoshi/
 ├── hoshi-user            # 注册 / 登录
 ├── hoshi-companion       # 桌宠状态与 WebSocket
 ├── hoshi-server          # Spring Boot 启动入口
-└── hoshi-web             # React + Vite 前端
+├── hoshi-app             # Electron 桌面客户端（主产品）
+└── hoshi-web             # 宣传页 / 展示站点
 ```
 
 ## 技术栈
@@ -25,7 +26,8 @@ hoshi/
 |------|------|
 | 后端 | Java 17, Spring Boot 4, Spring Security, MyBatis-Plus, Flyway |
 | 数据 | MySQL, Redis |
-| 前端 | React, TypeScript, Vite |
+| 桌面端 | Electron, React, TypeScript, electron-vite |
+| 官网 | React, TypeScript, Vite |
 | AI（规划中） | Spring AI |
 
 ## 快速开始
@@ -54,7 +56,15 @@ GRANT ALL PRIVILEGES ON hoshi.* TO 'hoshi'@'localhost';
 
 默认端口：`8080`。Flyway 会自动执行数据库迁移。
 
-### 启动前端
+### 启动桌面客户端
+
+```bash
+cd hoshi-app
+npm install
+npm run dev
+```
+
+### 启动宣传页（可选）
 
 ```bash
 cd hoshi-web
@@ -62,18 +72,46 @@ npm install
 npm run dev
 ```
 
+### SMTP 配置（注册验证 / 忘记密码）
+
+```bash
+export SMTP_HOST=smtp.qq.com
+export SMTP_PORT=587
+export SMTP_USERNAME=your@qq.com
+export SMTP_PASSWORD=your-smtp-auth-code
+export HOSHI_MAIL_FROM=your@qq.com
+export HOSHI_PUBLIC_URL=http://localhost:5173
+```
+
+邮件链接格式：`{HOSHI_PUBLIC_URL}/verify-email?token=...` 与 `/reset-password?token=...`
+
 ### API 示例
 
 ```bash
-# 注册
+# 注册（发送验证邮件，未验证前不可登录）
 curl -X POST http://localhost:8080/api/v1/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"username":"demo","email":"demo@example.com","password":"password123"}'
+
+# 验证邮箱
+curl -X POST http://localhost:8080/api/v1/auth/verify-email \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"邮件中的token"}'
 
 # 登录
 curl -X POST http://localhost:8080/api/v1/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"usernameOrEmail":"demo","password":"password123"}'
+
+# 忘记密码
+curl -X POST http://localhost:8080/api/v1/auth/forgot-password \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@example.com"}'
+
+# 重置密码
+curl -X POST http://localhost:8080/api/v1/auth/reset-password \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"邮件中的token","newPassword":"newpassword123"}'
 ```
 
 ## 开发

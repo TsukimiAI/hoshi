@@ -1,0 +1,235 @@
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.4);
+  animation: fade-in 0.15s ease;
+}
+
+.login-modal {
+  position: relative;
+  width: min(400px, 100%);
+  padding: 1.75rem;
+  border-radius: var(--hoshi-radius);
+  border: 1px solid var(--hoshi-border);
+  background: var(--hoshi-bg);
+  box-shadow: var(--hoshi-shadow);
+  animation: slide-up 0.2s ease;
+}
+
+.login-close {
+  position: absolute;
+  z-index: 1;
+  top: 0.85rem;
+  right: 0.85rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: none;
+  border-radius: var(--hoshi-radius-sm);
+  background: transparent;
+  color: var(--hoshi-text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.login-close:hover {
+  background: var(--hoshi-surface-hover);
+  color: var(--hoshi-text);
+}
+
+.login-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1.25rem;
+  padding-right: 2rem;
+  border-bottom: 1px solid var(--hoshi-border);
+}
+
+.login-tabs button {
+  flex: 1;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--hoshi-text-muted);
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.login-tabs button.active {
+  color: var(--hoshi-text);
+  border-bottom-color: var(--hoshi-primary);
+}
+
+.login-modal h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.login-subtitle {
+  margin: 0.4rem 0 1.25rem;
+  color: var(--hoshi-text-muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.login-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.login-form label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--hoshi-text);
+}
+
+.login-form input {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--hoshi-border-strong);
+  border-radius: var(--hoshi-radius-sm);
+  background: var(--hoshi-bg);
+  color: var(--hoshi-text);
+  font-size: 0.92rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.login-form input:focus {
+  border-color: var(--hoshi-text-muted);
+}
+
+.login-submit {
+  margin-top: 0.25rem;
+  padding: 0.7rem 1rem;
+  border: none;
+  border-radius: var(--hoshi-radius-sm);
+  background: var(--hoshi-primary);
+  color: var(--hoshi-primary-text);
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.login-submit:hover:not(:disabled) {
+  background: var(--hoshi-primary-hover);
+}
+
+.login-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.login-secondary {
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--hoshi-border-strong);
+  border-radius: var(--hoshi-radius-sm);
+  background: var(--hoshi-bg);
+  color: var(--hoshi-text);
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.login-secondary:hover {
+  background: var(--hoshi-surface-hover);
+}
+
+.login-link {
+  margin-top: 0.85rem;
+  border: none;
+  background: none;
+  color: var(--hoshi-text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.login-link:hover {
+  color: var(--hoshi-text);
+}
+
+.login-error {
+  margin: 0;
+  color: var(--hoshi-danger);
+  font-size: 0.85rem;
+}
+
+.login-info {
+  margin: 0;
+  color: var(--hoshi-success);
+  font-size: 0.85rem;
+}
+
+.login-actions {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.login-email-code__row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.login-email-code__row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.login-code-btn {
+  flex-shrink: 0;
+  padding: 0 0.75rem;
+  border: 1px solid var(--hoshi-border-strong);
+  border-radius: var(--hoshi-radius-sm);
+  background: var(--hoshi-bg);
+  color: var(--hoshi-text);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.login-code-btn:hover:not(:disabled) {
+  background: var(--hoshi-surface-hover);
+}
+
+.login-code-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

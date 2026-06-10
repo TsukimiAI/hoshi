@@ -1,1 +1,2 @@
 com.tsukimiai.hoshi.security.config.SecurityConfiguration
+com.tsukimiai.hoshi.security.jwt.JwtBlacklistConfiguration

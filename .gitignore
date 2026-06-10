@@ -32,6 +32,12 @@ build/
 ### VS Code ###
 .vscode/
 
+### Local secrets ###
+hoshi-server/src/main/resources/application-local.yml
+
 ### Frontend ###
 hoshi-web/node_modules/
 hoshi-web/dist/
+hoshi-app/node_modules/
+hoshi-app/out/
+hoshi-app/dist/

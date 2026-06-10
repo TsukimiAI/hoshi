@@ -1,0 +1,25 @@
+@import './base.css';
+
+body {
+  overflow: hidden;
+}
+
+.chat-panel__messages,
+.composer__field input {
+  user-select: text;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+}
+
+input,
+textarea,
+button {
+  font: inherit;
+}
+
+button {
+  font-family: var(--hoshi-font, inherit);
+}
