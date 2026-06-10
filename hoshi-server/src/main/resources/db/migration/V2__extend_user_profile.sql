@@ -1,0 +1,4 @@
+ALTER TABLE hoshi_user ADD COLUMN avatar_url VARCHAR(512) NULL;
+ALTER TABLE hoshi_user ADD COLUMN email_verified TINYINT NOT NULL DEFAULT 0;
+ALTER TABLE hoshi_user ADD COLUMN email_verified_at DATETIME NULL;
+ALTER TABLE hoshi_user ADD COLUMN last_login_at DATETIME NULL;

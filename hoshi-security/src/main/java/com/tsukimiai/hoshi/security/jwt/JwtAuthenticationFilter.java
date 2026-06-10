@@ -20,9 +20,11 @@ import jakarta.servlet.http.HttpServletResponse;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
+    private final JwtBlacklistService jwtBlacklistService;
 
-    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider) {
+    public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider, JwtBlacklistService jwtBlacklistService) {
         this.jwtTokenProvider = jwtTokenProvider;
+        this.jwtBlacklistService = jwtBlacklistService;
     }
 
     @Override
@@ -33,8 +35,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String token = authorization.substring(7);
             try {
                 Claims claims = jwtTokenProvider.parseToken(token);
+                String jti = claims.getId();
+                if (jwtBlacklistService.isBlacklisted(jti)) {
+                    throw new IllegalArgumentException("Token revoked");
+                }
+                String username = claims.get("username", String.class);
+                if (username == null || username.isBlank()) {
+                    throw new IllegalArgumentException("Missing username claim");
+                }
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                        claims.getSubject(),
+                        username,
                         null,
                         Collections.emptyList());
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

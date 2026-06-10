@@ -1,4 +1,7 @@
 spring:
+  config:
+    import:
+      - optional:classpath:application-local.yml
   application:
     name: hoshi-server
   datasource:
@@ -14,16 +17,44 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+  # QQ 邮箱：465 + SSL，或 587 + STARTTLS（见 README / application-local.yml.example）
+  mail:
+    host: ${SMTP_HOST:smtp.qq.com}
+    port: ${SMTP_PORT:465}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: ${SMTP_SSL_ENABLE:true}
+          starttls:
+            enable: ${SMTP_STARTTLS_ENABLE:false}
+            required: false
 
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
 
 hoshi:
+  mail:
+    # 发件人需与 SMTP 授权邮箱一致（QQ 邮箱要求）
+    from: ${HOSHI_MAIL_FROM:${SMTP_USERNAME:}}
+    enabled: ${HOSHI_MAIL_ENABLED:true}
+  app:
+    public-url: ${HOSHI_PUBLIC_URL:http://localhost:5173}
   security:
     jwt:
       secret: ${HOSHI_JWT_SECRET:change-me-in-production-use-at-least-256-bits}
       access-token-ttl-seconds: 7200
+    email-verify-ttl-hours: 24
+    password-reset-ttl-minutes: 30
+    email-code-ttl-minutes: 10
+    email-code-send-cooldown-seconds: 60
+    refresh-token-ttl-days: 30
+    login-max-attempts-per-minute: 20
+    send-code-max-attempts-per-hour: 10
 
 server:
   port: 8080
