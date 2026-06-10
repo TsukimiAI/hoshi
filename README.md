@@ -88,4 +88,4 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © 2026 TsukimiAI
