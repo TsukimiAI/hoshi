@@ -10,6 +10,7 @@ spring:
     exclude:
       - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
       - org.springframework.boot.mail.autoconfigure.MailSenderAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration
 
 hoshi:
   mail:

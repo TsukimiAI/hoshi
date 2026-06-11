@@ -175,6 +175,8 @@
   display: grid;
   grid-template-rows: auto 1fr;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: var(--hoshi-bg);
 }
 
@@ -439,10 +441,26 @@
   flex-direction: column;
   gap: 1.25rem;
   max-width: 768px;
+  min-height: 0;
   margin: 0 auto;
   width: 100%;
-  padding: 1.5rem 1.25rem;
-  overflow: auto;
+  padding: 1.5rem 1.25rem 2rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.chat-panel__status {
+  margin: 0;
+  color: var(--hoshi-text-muted);
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.chat-panel__scroll-anchor {
+  flex-shrink: 0;
+  width: 100%;
+  height: 1px;
 }
 
 .chat-bubble {
@@ -474,6 +492,104 @@
   line-height: 1.7;
   color: var(--hoshi-text);
   font-size: 0.95rem;
+}
+
+.chat-bubble__content {
+  line-height: 1.7;
+  color: var(--hoshi-text);
+  font-size: 0.95rem;
+}
+
+.chat-markdown {
+  display: flow-root;
+}
+
+.chat-markdown p,
+.chat-markdown ul,
+.chat-markdown ol,
+.chat-markdown pre,
+.chat-markdown blockquote {
+  margin: 0 0 0.75rem;
+}
+
+.chat-markdown p:last-child,
+.chat-markdown ul:last-child,
+.chat-markdown ol:last-child,
+.chat-markdown pre:last-child,
+.chat-markdown blockquote:last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  padding-left: 1.25rem;
+}
+
+.chat-markdown code {
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  background: var(--hoshi-bg-secondary);
+  font-size: 0.88em;
+}
+
+.chat-markdown pre {
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--hoshi-radius-sm);
+  background: var(--hoshi-bg-secondary);
+  overflow-x: auto;
+}
+
+.chat-markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.chat-markdown blockquote {
+  padding-left: 0.85rem;
+  border-left: 3px solid var(--hoshi-border);
+  color: var(--hoshi-text-muted);
+}
+
+.chat-panel__error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border-radius: var(--hoshi-radius);
+  background: color-mix(in srgb, var(--hoshi-bg-secondary) 80%, #ffb4b4);
+}
+
+.chat-panel__error p {
+  margin: 0;
+  color: var(--hoshi-text);
+  font-size: 0.92rem;
+}
+
+.chat-panel__error button {
+  border: none;
+  border-radius: var(--hoshi-radius-sm);
+  padding: 0.35rem 0.75rem;
+  background: var(--hoshi-bg);
+  color: var(--hoshi-text);
+  cursor: pointer;
+}
+
+.composer__send--stop {
+  background: var(--hoshi-bg-secondary);
+  color: var(--hoshi-text);
+}
+
+.chat-bubble__cursor {
+  display: inline-block;
+  margin-left: 0.1rem;
+  animation: chat-cursor-blink 1s step-end infinite;
+}
+
+@keyframes chat-cursor-blink {
+  50% {
+    opacity: 0;
+  }
 }
 
 .chat-bubble--user p {

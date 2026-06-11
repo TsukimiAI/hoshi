@@ -3,7 +3,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 const hoshiApi = {
   platform: process.platform,
-  apiBaseUrl: process.env.NODE_ENV === 'development' ? '' : 'http://localhost:8080'
+  // 开发环境也直连后端，避免 Vite 代理缓冲 SSE 流式响应
+  apiBaseUrl: 'http://localhost:8080'
 }
 
 if (process.contextIsolated) {

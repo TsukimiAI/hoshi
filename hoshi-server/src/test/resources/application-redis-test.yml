@@ -9,6 +9,7 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.boot.mail.autoconfigure.MailSenderAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration
   data:
     redis:
       host: localhost

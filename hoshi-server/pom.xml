@@ -32,6 +32,14 @@
         </dependency>
         <dependency>
             <groupId>com.tsukimiai</groupId>
+            <artifactId>hoshi-conversation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.tsukimiai</groupId>
+            <artifactId>hoshi-ai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.tsukimiai</groupId>
             <artifactId>hoshi-companion</artifactId>
         </dependency>
         <dependency>
