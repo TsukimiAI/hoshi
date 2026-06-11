@@ -19,9 +19,31 @@ export function setAuthHttpHandlers(handlers: {
   onUnauthorized = handlers.onUnauthorized
 }
 
-function resolveUrl(path: string): string {
+export async function tryRefreshApiSession(): Promise<boolean> {
+  if (!tryRefreshSession) {
+    return false
+  }
+  return tryRefreshSession()
+}
+
+export function notifyApiUnauthorized(): void {
+  onUnauthorized?.()
+}
+
+export function resolveApiUrl(path: string): string {
   const base = window.hoshi.apiBaseUrl.replace(/\/$/, '')
   return `${base}${path}`
+}
+
+export function buildAuthHeaders(contentType = 'application/json'): Record<string, string> {
+  const token = getAccessToken()
+  const headers: Record<string, string> = {
+    'Content-Type': contentType
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+  return headers
 }
 
 export async function apiFetch<T>(
@@ -38,7 +60,7 @@ export async function apiFetch<T>(
     headers.Authorization = `Bearer ${token}`
   }
 
-  const response = await fetch(resolveUrl(path), {
+  const response = await fetch(resolveApiUrl(path), {
     ...init,
     headers
   })

@@ -18,7 +18,10 @@ public enum ErrorCode {
     EMAIL_CODE_SEND_TOO_FREQUENT(42901, "验证码发送过于频繁，请稍后再试"),
     TOO_MANY_LOGIN_ATTEMPTS(42902, "登录尝试过于频繁，请稍后再试"),
     INVALID_REFRESH_TOKEN(40102, "登录已过期，请重新登录"),
-    USER_NOT_FOUND(40401, "用户不存在");
+    USER_NOT_FOUND(40401, "用户不存在"),
+    CHAT_SESSION_NOT_FOUND(40402, "会话不存在"),
+    CHAT_SESSION_FORBIDDEN(40302, "无权访问该会话"),
+    CHAT_AI_UNAVAILABLE(50301, "AI 服务未配置或暂时不可用");
 
     private final int code;
     private final String message;

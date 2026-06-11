@@ -1,17 +1,7 @@
 import { useEffect, useState } from 'react'
+import { useAuth } from '../auth/AuthContext'
+import { useChatSessions } from '../chat/ChatSessionContext'
 import { DEFAULT_PET_EMOTION, getPetSprite, resolvePetEmotion } from '../pet/petSprites'
-
-interface ChatSession {
-  id: string
-  title: string
-  updatedAt: string
-}
-
-const PLACEHOLDER_SESSIONS: ChatSession[] = [
-  { id: 'main', title: '和星奈', updatedAt: '刚刚' },
-  { id: '2', title: '注册流程讨论', updatedAt: '昨天' },
-  { id: '3', title: '界面布局', updatedAt: '3 天前' }
-]
 
 function resolveWsUrl(): string {
   const base = window.hoshi.apiBaseUrl
@@ -25,11 +15,35 @@ function resolveWsUrl(): string {
   return url.toString()
 }
 
+function formatSessionTime(value: string): string {
+  const updatedAt = new Date(value)
+  if (Number.isNaN(updatedAt.getTime())) {
+    return value
+  }
+
+  const diffMs = Date.now() - updatedAt.getTime()
+  const diffMinutes = Math.floor(diffMs / 60000)
+
+  if (diffMinutes < 1) return '刚刚'
+  if (diffMinutes < 60) return `${diffMinutes} 分钟前`
+
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24) return `${diffHours} 小时前`
+
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7) return `${diffDays} 天前`
+
+  return updatedAt.toLocaleDateString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric'
+  })
+}
+
 export function PetPanel(): React.JSX.Element {
+  const { user, requireAuth } = useAuth()
+  const { sessions, loading, error, activeSessionId, selectSession, createSession } = useChatSessions()
   const [emotion, setEmotion] = useState(DEFAULT_PET_EMOTION)
   const [sessionsOpen, setSessionsOpen] = useState(false)
-  const [sessions, setSessions] = useState(PLACEHOLDER_SESSIONS)
-  const [activeSessionId, setActiveSessionId] = useState('main')
 
   useEffect(() => {
     const socket = new WebSocket(resolveWsUrl())
@@ -49,17 +63,17 @@ export function PetPanel(): React.JSX.Element {
   }, [])
 
   const handleNewSession = (): void => {
-    const id = `session-${Date.now()}`
-    setSessions((prev) => [
-      { id, title: '新会话', updatedAt: '刚刚' },
-      ...prev.filter((item) => item.id !== id)
-    ])
-    setActiveSessionId(id)
-    setSessionsOpen(false)
+    requireAuth(() => {
+      void createSession().then((session) => {
+        if (session) {
+          setSessionsOpen(false)
+        }
+      })
+    })
   }
 
   const handleSelectSession = (id: string): void => {
-    setActiveSessionId(id)
+    selectSession(id)
     setSessionsOpen(false)
   }
 
@@ -112,20 +126,34 @@ export function PetPanel(): React.JSX.Element {
           aria-label="会话记录"
           aria-hidden={!sessionsOpen}
         >
-          <ul className="pet-session-list">
-            {sessions.map((session) => (
-              <li key={session.id}>
-                <button
-                  type="button"
-                  className={`pet-session-item ${session.id === activeSessionId ? 'active' : ''}`}
-                  onClick={() => handleSelectSession(session.id)}
-                >
-                  <span className="pet-session-item__title">{session.title}</span>
-                  <span className="pet-session-item__time">{session.updatedAt}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          {!user ? (
+            <div className="pet-session-list">
+              <p className="pet-session-item__title">登录后可查看会话记录</p>
+            </div>
+          ) : loading ? (
+            <div className="pet-session-list">
+              <p className="pet-session-item__title">正在加载会话…</p>
+            </div>
+          ) : error ? (
+            <div className="pet-session-list">
+              <p className="pet-session-item__title">{error}</p>
+            </div>
+          ) : (
+            <ul className="pet-session-list">
+              {sessions.map((session) => (
+                <li key={session.id}>
+                  <button
+                    type="button"
+                    className={`pet-session-item ${session.id === activeSessionId ? 'active' : ''}`}
+                    onClick={() => handleSelectSession(session.id)}
+                  >
+                    <span className="pet-session-item__title">{session.title}</span>
+                    <span className="pet-session-item__time">{formatSessionTime(session.updatedAt)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </aside>
       </div>
     </section>

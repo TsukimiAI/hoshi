@@ -13,13 +13,13 @@ export const PET_SPRITES: Record<string, string> = Object.fromEntries(
   Object.entries(modules).map(([path, url]) => [spriteNameFromPath(path), url])
 )
 
-export const DEFAULT_PET_EMOTION = '正常'
+export const DEFAULT_PET_EMOTION = 'normal'
 
 /** 后端旧版英文 emotion 兼容映射 */
 const LEGACY_EMOTION_MAP: Record<string, string> = {
-  IDLE: '正常',
-  HAPPY: '开心',
-  SLEEPY: '生无可恋'
+  IDLE: 'normal',
+  HAPPY: 'happy',
+  SLEEPY: 'wry'
 }
 
 export const PET_EMOTION_LIST = Object.keys(PET_SPRITES).sort()

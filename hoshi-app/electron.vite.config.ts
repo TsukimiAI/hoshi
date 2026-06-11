@@ -14,7 +14,20 @@ export default defineConfig({
     plugins: [react()],
     server: {
       proxy: {
-        '/api': 'http://localhost:8080',
+        '/api': {
+          target: 'http://localhost:8080',
+          changeOrigin: true,
+          configure(proxy) {
+            proxy.on('proxyRes', (proxyRes) => {
+              const contentType = proxyRes.headers['content-type']
+              if (typeof contentType === 'string' && contentType.includes('text/event-stream')) {
+                delete proxyRes.headers['content-length']
+                proxyRes.headers['cache-control'] = 'no-cache, no-transform'
+                proxyRes.headers['x-accel-buffering'] = 'no'
+              }
+            })
+          }
+        },
         '/ws': {
           target: 'ws://localhost:8080',
           ws: true

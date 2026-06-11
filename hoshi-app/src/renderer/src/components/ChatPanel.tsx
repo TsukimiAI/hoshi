@@ -1,28 +1,41 @@
+import { useEffect, useRef } from 'react'
+import { PENDING_ASSISTANT_ID } from '../api/chat'
 import { useAuth } from '../auth/AuthContext'
-
-interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-}
-
-const PLACEHOLDER_MESSAGES: ChatMessage[] = [
-  {
-    id: '1',
-    role: 'assistant',
-    content: '你好，我是拾星。登录后即可开始对话，Canvas 输出也会出现在这里。'
-  }
-]
+import { useChatMessages } from '../chat/ChatMessagesContext'
+import { useChatSessions } from '../chat/ChatSessionContext'
+import { ChatMarkdown } from './ChatMarkdown'
 
 export function ChatPanel(): React.JSX.Element {
   const { user } = useAuth()
+  const { activeSession } = useChatSessions()
+  const { messages, loading, error, sending, canRetry, retryLastMessage } = useChatMessages()
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
+
+  const subtitle = !user
+    ? '聊天与 Canvas 输出'
+    : activeSession
+      ? `当前会话：${activeSession.title}`
+      : `你好，${user.username}`
+
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    const shouldStickToBottom = distanceToBottom < 120 || sending
+
+    if (shouldStickToBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: sending ? 'auto' : 'smooth' })
+    }
+  }, [messages, sending])
 
   return (
     <section className="chat-panel">
       <div className="chat-panel__header">
         <div>
           <h2>工作区</h2>
-          <p>{user ? `你好，${user.username}` : '聊天与 Canvas 输出'}</p>
+          <p>{subtitle}</p>
         </div>
         <div className="chat-panel__tabs">
           <button type="button" className="active">
@@ -34,18 +47,54 @@ export function ChatPanel(): React.JSX.Element {
         </div>
       </div>
 
-      <div className="chat-panel__messages">
-        {PLACEHOLDER_MESSAGES.map((message) => (
-          <article
-            key={message.id}
-            className={`chat-bubble chat-bubble--${message.role}`}
-          >
-            <span className="chat-bubble__role">
-              {message.role === 'assistant' ? '拾星' : '你'}
-            </span>
-            <p>{message.content}</p>
+      <div ref={messagesContainerRef} className="chat-panel__messages">
+        {!user ? (
+          <article className="chat-bubble chat-bubble--assistant">
+            <span className="chat-bubble__role">星奈</span>
+            <p>登录后即可开始对话，Canvas 输出也会出现在这里。</p>
           </article>
-        ))}
+        ) : loading ? (
+          <p className="chat-panel__status">正在加载消息…</p>
+        ) : messages.length === 0 ? (
+          <article className="chat-bubble chat-bubble--assistant">
+            <span className="chat-bubble__role">星奈</span>
+            <p>你好，我是星奈。想聊点什么？</p>
+          </article>
+        ) : (
+          messages.map((message) => (
+            <article
+              key={message.id}
+              className={`chat-bubble chat-bubble--${message.role}`}
+            >
+              <span className="chat-bubble__role">
+                {message.role === 'assistant' ? '星奈' : '你'}
+              </span>
+              {message.role === 'assistant' ? (
+                <div className="chat-bubble__content">
+                  <ChatMarkdown content={message.content} />
+                  {message.id === PENDING_ASSISTANT_ID && sending ? (
+                    <span className="chat-bubble__cursor">▍</span>
+                  ) : null}
+                </div>
+              ) : (
+                <p>{message.content}</p>
+              )}
+            </article>
+          ))
+        )}
+
+        {error ? (
+          <div className="chat-panel__error">
+            <p>{error}</p>
+            {canRetry ? (
+              <button type="button" onClick={() => void retryLastMessage()}>
+                让星奈再试一次
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div ref={messagesEndRef} className="chat-panel__scroll-anchor" aria-hidden />
       </div>
     </section>
   )

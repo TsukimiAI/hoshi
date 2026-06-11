@@ -43,6 +43,8 @@
         <module>hoshi-infrastructure</module>
         <module>hoshi-security</module>
         <module>hoshi-user</module>
+        <module>hoshi-conversation</module>
+        <module>hoshi-ai</module>
         <module>hoshi-companion</module>
         <module>hoshi-server</module>
     </modules>
@@ -88,6 +90,16 @@
             <dependency>
                 <groupId>com.tsukimiai</groupId>
                 <artifactId>hoshi-user</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tsukimiai</groupId>
+                <artifactId>hoshi-conversation</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tsukimiai</groupId>
+                <artifactId>hoshi-ai</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

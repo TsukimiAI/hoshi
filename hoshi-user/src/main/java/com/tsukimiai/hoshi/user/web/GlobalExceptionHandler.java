@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.tsukimiai.hoshi.common.exception.AiServiceException;
+import com.tsukimiai.hoshi.common.message.XingnaiMessages;
 import com.tsukimiai.hoshi.common.api.ApiResponse;
 import com.tsukimiai.hoshi.common.exception.BusinessException;
 import com.tsukimiai.hoshi.common.exception.ErrorCode;
@@ -18,6 +20,14 @@ import com.tsukimiai.hoshi.common.exception.ErrorCode;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(AiServiceException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public ApiResponse<Void> handleAiServiceException(AiServiceException ex) {
+        log.warn("AI service error", ex);
+        String message = ex.getMessage() != null ? ex.getMessage() : XingnaiMessages.aiUnavailable();
+        return ApiResponse.fail(ex.getErrorCode().getCode(), message);
+    }
 
     @ExceptionHandler(BusinessException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
@@ -46,7 +56,7 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResponse<Void> handleUnexpectedException(Exception ex) {
         log.error("Unhandled exception", ex);
-        return ApiResponse.fail(ErrorCode.INTERNAL_ERROR.getCode(), "系统内部错误");
+        return ApiResponse.fail(ErrorCode.INTERNAL_ERROR.getCode(), XingnaiMessages.aiUnexpected());
     }
 
 }
