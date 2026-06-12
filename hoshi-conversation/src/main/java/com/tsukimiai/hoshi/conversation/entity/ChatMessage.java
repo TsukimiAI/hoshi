@@ -1,8 +1,10 @@
 package com.tsukimiai.hoshi.conversation.entity;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
@@ -17,6 +19,11 @@ public class ChatMessage {
     private String role;
 
     private String content;
+
+    private String emotion;
+
+    @TableField(exist = false)
+    private List<ChatMessageSegment> segments;
 
     private LocalDateTime createdAt;
 
@@ -50,6 +57,22 @@ public class ChatMessage {
 
     public void setContent(String content) {
         this.content = content;
+    }
+
+    public String getEmotion() {
+        return emotion;
+    }
+
+    public void setEmotion(String emotion) {
+        this.emotion = emotion;
+    }
+
+    public List<ChatMessageSegment> getSegments() {
+        return segments;
+    }
+
+    public void setSegments(List<ChatMessageSegment> segments) {
+        this.segments = segments;
     }
 
     public LocalDateTime getCreatedAt() {

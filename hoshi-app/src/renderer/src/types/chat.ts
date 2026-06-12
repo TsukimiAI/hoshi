@@ -9,6 +9,16 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
+  emotion: string | null
+  segments: ChatMessageSegment[]
+  createdAt: string
+}
+
+export interface ChatMessageSegment {
+  id: string
+  seq: number
+  content: string
+  emotion: string
   createdAt: string
 }
 

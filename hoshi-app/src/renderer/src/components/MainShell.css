@@ -345,25 +345,38 @@
 
 .pet-session-item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.2rem;
+  align-items: center;
+  gap: 0.35rem;
   width: 100%;
-  padding: 0.65rem 0.7rem;
-  border: none;
+  padding: 0.25rem;
+  border: 1px solid transparent;
   border-radius: var(--hoshi-radius-sm);
   background: transparent;
   text-align: left;
-  cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 
 .pet-session-item:hover {
   background: var(--hoshi-surface-hover);
+  border-color: var(--hoshi-border);
 }
 
 .pet-session-item.active {
   background: var(--hoshi-bg-secondary);
+}
+
+.pet-session-item__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.4rem 0.45rem;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
 .pet-session-item__title {
@@ -375,6 +388,29 @@
 .pet-session-item__time {
   font-size: 0.72rem;
   color: var(--hoshi-text-subtle);
+}
+
+.pet-session-item__delete {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--hoshi-text-subtle);
+  font-size: 0.72rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: var(--hoshi-radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.pet-session-item:hover .pet-session-item__delete,
+.pet-session-item:focus-within .pet-session-item__delete {
+  opacity: 1;
+}
+
+.pet-session-item__delete:hover {
+  background: color-mix(in srgb, var(--hoshi-bg) 70%, #f4d6d6);
+  color: #c44;
 }
 
 .pet-sprite {
@@ -485,6 +521,54 @@
   color: var(--hoshi-text-subtle);
   font-size: 0.75rem;
   font-weight: 500;
+}
+
+.chat-bubble__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.chat-bubble__header .chat-bubble__role {
+  margin-bottom: 0;
+}
+
+.chat-bubble__actions {
+  display: flex;
+  gap: 0.35rem;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.chat-bubble:hover .chat-bubble__actions,
+.chat-bubble:focus-within .chat-bubble__actions {
+  opacity: 1;
+}
+
+.chat-bubble__actions button {
+  border: none;
+  border-radius: var(--hoshi-radius-sm);
+  padding: 0.15rem 0.45rem;
+  background: var(--hoshi-bg-secondary);
+  color: var(--hoshi-text-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.chat-bubble__actions button:hover:not(:disabled) {
+  color: var(--hoshi-text);
+  background: var(--hoshi-bg);
+}
+
+.chat-bubble__actions button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chat-bubble__action--danger:hover:not(:disabled) {
+  color: #c44;
 }
 
 .chat-bubble p {
@@ -598,6 +682,7 @@
   border-radius: var(--hoshi-radius);
   background: var(--hoshi-bg-secondary);
   text-align: left;
+  white-space: pre-wrap;
 }
 
 .shell__footer {
@@ -619,7 +704,8 @@
   flex: 1;
 }
 
-.composer__field input {
+.composer__field input,
+.composer__field textarea {
   width: 100%;
   padding: 0.75rem 0.9rem;
   padding-right: 4rem;
@@ -628,20 +714,31 @@
   background: var(--hoshi-bg);
   color: var(--hoshi-text);
   font-size: 0.95rem;
+  font-family: inherit;
+  line-height: 1.5;
   outline: none;
   transition: border-color 0.15s;
   resize: none;
 }
 
-.composer__field input:focus {
+.composer__field textarea {
+  min-height: 2.75rem;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.composer__field input:focus,
+.composer__field textarea:focus {
   border-color: var(--hoshi-text-muted);
 }
 
-.composer__field input::placeholder {
+.composer__field input::placeholder,
+.composer__field textarea::placeholder {
   color: var(--hoshi-text-subtle);
 }
 
-.composer__field--locked input {
+.composer__field--locked input,
+.composer__field--locked textarea {
   background: var(--hoshi-bg-secondary);
 }
 
@@ -652,6 +749,35 @@
   transform: translateY(-50%);
   color: var(--hoshi-text-subtle);
   font-size: 0.72rem;
+}
+
+.composer__web-search {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--hoshi-border-strong);
+  border-radius: var(--hoshi-radius);
+  background: var(--hoshi-bg);
+  color: var(--hoshi-text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.composer__web-search.is-active {
+  border-color: var(--hoshi-primary);
+  background: color-mix(in srgb, var(--hoshi-primary) 12%, var(--hoshi-bg));
+  color: var(--hoshi-text);
+}
+
+.composer__web-search:hover:not(:disabled) {
+  border-color: var(--hoshi-text-muted);
+  color: var(--hoshi-text);
+}
+
+.composer__web-search:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .composer__send {

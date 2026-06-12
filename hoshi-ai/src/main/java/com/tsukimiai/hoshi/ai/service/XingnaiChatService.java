@@ -11,4 +11,10 @@ public interface XingnaiChatService {
     String complete(List<AiChatTurn> history);
 
     Flux<String> stream(List<AiChatTurn> history);
+
+    Flux<String> stream(List<AiChatTurn> history, boolean webSearch);
+
+    String suggestSessionTitle(String userMessage, String assistantReply);
+
+    String suggestEmotion(String assistantReply, List<String> allowedEmotions);
 }

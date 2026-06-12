@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext'
 import { useChatMessages } from '../chat/ChatMessagesContext'
 import { useChatSessions } from '../chat/ChatSessionContext'
 import { ChatMarkdown } from './ChatMarkdown'
+import { ChatMessageActions } from './ChatMessageActions'
 
 export function ChatPanel(): React.JSX.Element {
   const { user } = useAuth()
@@ -18,6 +19,10 @@ export function ChatPanel(): React.JSX.Element {
       ? `当前会话：${activeSession.title}`
       : `你好，${user.username}`
 
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth'): void => {
+    messagesEndRef.current?.scrollIntoView({ behavior })
+  }
+
   useEffect(() => {
     const container = messagesContainerRef.current
     if (!container) return
@@ -26,9 +31,15 @@ export function ChatPanel(): React.JSX.Element {
     const shouldStickToBottom = distanceToBottom < 120 || sending
 
     if (shouldStickToBottom) {
-      messagesEndRef.current?.scrollIntoView({ behavior: sending ? 'auto' : 'smooth' })
+      scrollToBottom(sending ? 'auto' : 'smooth')
     }
   }, [messages, sending])
+
+  useEffect(() => {
+    if (sending) {
+      scrollToBottom('auto')
+    }
+  }, [sending])
 
   return (
     <section className="chat-panel">
@@ -61,26 +72,38 @@ export function ChatPanel(): React.JSX.Element {
             <p>你好，我是星奈。想聊点什么？</p>
           </article>
         ) : (
-          messages.map((message) => (
-            <article
-              key={message.id}
-              className={`chat-bubble chat-bubble--${message.role}`}
-            >
-              <span className="chat-bubble__role">
-                {message.role === 'assistant' ? '星奈' : '你'}
-              </span>
-              {message.role === 'assistant' ? (
-                <div className="chat-bubble__content">
-                  <ChatMarkdown content={message.content} />
-                  {message.id === PENDING_ASSISTANT_ID && sending ? (
-                    <span className="chat-bubble__cursor">▍</span>
+          messages.map((message, index) => {
+            const isLastAssistant =
+              message.role === 'assistant' &&
+              message.id !== PENDING_ASSISTANT_ID &&
+              !messages.slice(index + 1).some((item) => item.role === 'assistant')
+
+            return (
+              <article
+                key={message.id}
+                className={`chat-bubble chat-bubble--${message.role}`}
+              >
+                <div className="chat-bubble__header">
+                  <span className="chat-bubble__role">
+                    {message.role === 'assistant' ? '星奈' : '你'}
+                  </span>
+                  {message.id !== PENDING_ASSISTANT_ID ? (
+                    <ChatMessageActions message={message} isLastAssistant={isLastAssistant} />
                   ) : null}
                 </div>
-              ) : (
-                <p>{message.content}</p>
-              )}
-            </article>
-          ))
+                {message.role === 'assistant' ? (
+                  <div className="chat-bubble__content">
+                    <ChatMarkdown content={message.content} />
+                    {message.id === PENDING_ASSISTANT_ID && sending ? (
+                      <span className="chat-bubble__cursor">▍</span>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p>{message.content}</p>
+                )}
+              </article>
+            )
+          })
         )}
 
         {error ? (

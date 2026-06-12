@@ -9,6 +9,7 @@ import org.springframework.util.StringUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tsukimiai.hoshi.common.exception.BusinessException;
 import com.tsukimiai.hoshi.common.exception.ErrorCode;
+import com.tsukimiai.hoshi.conversation.ChatSessionTitles;
 import com.tsukimiai.hoshi.conversation.entity.ChatSession;
 import com.tsukimiai.hoshi.conversation.mapper.ChatSessionMapper;
 import com.tsukimiai.hoshi.conversation.service.ChatSessionService;
@@ -18,8 +19,8 @@ import com.tsukimiai.hoshi.user.entity.User;
 @Transactional
 public class ChatSessionServiceImpl implements ChatSessionService {
 
-    private static final String DEFAULT_SESSION_TITLE = "和星奈";
-    private static final String NEW_SESSION_TITLE = "新会话";
+    private static final String DEFAULT_SESSION_TITLE = ChatSessionTitles.DEFAULT;
+    private static final String NEW_SESSION_TITLE = ChatSessionTitles.NEW_SESSION;
 
     private final ChatSessionMapper chatSessionMapper;
 

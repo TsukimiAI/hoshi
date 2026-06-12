@@ -23,11 +23,20 @@ public final class XingnaiMessages {
         return "现在没有可以重试的消息哦，先跟我说点什么吧。";
     }
 
+    public static String regenerateUnavailable() {
+        return "还没有可以重新生成的回复呢。";
+    }
+
+    public static String messageNotFound() {
+        return "这条消息好像找不到了…";
+    }
+
     public static String forErrorCode(ErrorCode errorCode) {
         return switch (errorCode) {
             case CHAT_AI_UNAVAILABLE -> aiUnavailable();
             case CHAT_SESSION_NOT_FOUND -> "这个会话好像找不到了…要不我们开一个新的？";
             case CHAT_SESSION_FORBIDDEN -> "这个会话我暂时进不去呢。";
+            case CHAT_MESSAGE_NOT_FOUND -> messageNotFound();
             case BAD_REQUEST -> "唔，这句话我好像不太明白，能换种说法吗？";
             default -> aiUnexpected();
         };
