@@ -21,6 +21,7 @@ public enum ErrorCode {
     USER_NOT_FOUND(40401, "用户不存在"),
     CHAT_SESSION_NOT_FOUND(40402, "会话不存在"),
     CHAT_SESSION_FORBIDDEN(40302, "无权访问该会话"),
+    CHAT_MESSAGE_NOT_FOUND(40403, "消息不存在"),
     CHAT_AI_UNAVAILABLE(50301, "AI 服务未配置或暂时不可用");
 
     private final int code;

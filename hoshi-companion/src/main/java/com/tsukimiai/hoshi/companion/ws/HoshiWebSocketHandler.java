@@ -6,12 +6,20 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import com.tsukimiai.hoshi.companion.service.CompanionBroadcastService;
+
 @Component
 public class HoshiWebSocketHandler extends TextWebSocketHandler {
 
+    private final CompanionBroadcastService broadcastService;
+
+    public HoshiWebSocketHandler(CompanionBroadcastService broadcastService) {
+        this.broadcastService = broadcastService;
+    }
+
     @Override
-    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        session.sendMessage(new TextMessage("{\"type\":\"ready\",\"emotion\":\"正常\"}"));
+    public void afterConnectionEstablished(WebSocketSession session) {
+        broadcastService.register(session);
     }
 
     @Override
@@ -21,7 +29,7 @@ public class HoshiWebSocketHandler extends TextWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        // Session cleanup will be handled in later iterations.
+        broadcastService.unregister(session);
     }
 
 }

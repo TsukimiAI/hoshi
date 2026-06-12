@@ -47,6 +47,9 @@ public class SecurityConfiguration {
                         .permitAll()
                         .requestMatchers("/actuator/health", "/ws/**", "/error").permitAll()
                         .anyRequest().authenticated())
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint(SecurityJsonHandlers.authenticationEntryPoint())
+                        .accessDeniedHandler(SecurityJsonHandlers.accessDeniedHandler()))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

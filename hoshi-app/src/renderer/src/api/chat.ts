@@ -12,8 +12,12 @@ export const PENDING_ASSISTANT_ID = '__pending_assistant__'
 
 export interface ChatStreamHandlers {
   onUserMessage?: (message: ChatMessage) => void
-  onDelta: (delta: string) => void
+  onSegmentStart?: (segment: { seq: number; emotion: string; contentLength: number }) => void
+  onSegmentEmotion?: (segment: { seq: number; emotion: string }) => void
+  onSegmentDelta: (segment: { seq: number; content: string }) => void
+  onSegmentDone?: (segment: { seq: number; content: string; emotion: string }) => void
   onDone: (message: ChatMessage) => void
+  onSession?: (session: ChatSession) => void
   onError?: (message: string) => void
 }
 
@@ -54,17 +58,23 @@ export function fetchMessages(sessionId: string) {
   return apiFetch<ChatMessage[]>(`/api/v1/chat/sessions/${sessionId}/messages`)
 }
 
+export interface SendMessageBody {
+  content: string
+  webSearch?: boolean
+}
+
 export async function sendMessageStream(
   sessionId: string,
   content: string,
   handlers: ChatStreamHandlers,
-  options: ChatStreamOptions = {}
+  options: ChatStreamOptions & { webSearch?: boolean } = {}
 ): Promise<void> {
+  const { webSearch, ...streamOptions } = options
   return consumeMessageStream(
     `/api/v1/chat/sessions/${sessionId}/messages`,
-    { content },
+    { content, webSearch: webSearch === true },
     handlers,
-    options
+    streamOptions
   )
 }
 
@@ -81,9 +91,28 @@ export async function retryMessageStream(
   )
 }
 
+export async function regenerateMessageStream(
+  sessionId: string,
+  handlers: ChatStreamHandlers,
+  options: ChatStreamOptions = {}
+): Promise<void> {
+  return consumeMessageStream(
+    `/api/v1/chat/sessions/${sessionId}/messages/regenerate`,
+    undefined,
+    handlers,
+    options
+  )
+}
+
+export function deleteMessage(sessionId: string, messageId: string) {
+  return apiFetch<void>(`/api/v1/chat/sessions/${sessionId}/messages/${messageId}`, {
+    method: 'DELETE'
+  })
+}
+
 async function consumeMessageStream(
   path: string,
-  body: { content: string } | undefined,
+  body: SendMessageBody | undefined,
   handlers: ChatStreamHandlers,
   options: ChatStreamOptions
 ): Promise<void> {
@@ -123,12 +152,30 @@ async function consumeMessageStream(
       return
     }
     if (event === 'delta') {
-      const payload = JSON.parse(data) as { content: string }
-      handlers.onDelta(payload.content)
+      return
+    }
+    if (event === 'segment_start') {
+      handlers.onSegmentStart?.(JSON.parse(data) as { seq: number; emotion: string; contentLength: number })
+      return
+    }
+    if (event === 'segment_emotion') {
+      handlers.onSegmentEmotion?.(JSON.parse(data) as { seq: number; emotion: string })
+      return
+    }
+    if (event === 'segment_delta') {
+      handlers.onSegmentDelta(JSON.parse(data) as { seq: number; content: string })
+      return
+    }
+    if (event === 'segment_done') {
+      handlers.onSegmentDone?.(JSON.parse(data) as { seq: number; content: string; emotion: string })
       return
     }
     if (event === 'done') {
       handlers.onDone(JSON.parse(data) as ChatMessage)
+      return
+    }
+    if (event === 'session') {
+      handlers.onSession?.(JSON.parse(data) as ChatSession)
       return
     }
     if (event === 'error') {

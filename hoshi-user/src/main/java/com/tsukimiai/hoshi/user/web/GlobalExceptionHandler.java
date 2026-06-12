@@ -3,12 +3,15 @@ package com.tsukimiai.hoshi.user.web;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.mail.MailException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import jakarta.servlet.http.HttpServletResponse;
 
 import com.tsukimiai.hoshi.common.exception.AiServiceException;
 import com.tsukimiai.hoshi.common.message.XingnaiMessages;
@@ -23,7 +26,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(AiServiceException.class)
     @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
-    public ApiResponse<Void> handleAiServiceException(AiServiceException ex) {
+    public ApiResponse<Void> handleAiServiceException(AiServiceException ex, HttpServletResponse response) {
+        if (isEventStreamResponse(response)) {
+            log.warn("AI service error on SSE response (already handled in stream)", ex);
+            return null;
+        }
         log.warn("AI service error", ex);
         String message = ex.getMessage() != null ? ex.getMessage() : XingnaiMessages.aiUnavailable();
         return ApiResponse.fail(ex.getErrorCode().getCode(), message);
@@ -31,7 +38,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public ApiResponse<Void> handleBusinessException(BusinessException ex) {
+    public ApiResponse<Void> handleBusinessException(BusinessException ex, HttpServletResponse response) {
+        if (isEventStreamResponse(response)) {
+            log.warn("Business error on SSE response (already handled in stream)", ex);
+            return null;
+        }
         ErrorCode errorCode = ex.getErrorCode();
         String message = ex.getMessage() != null ? ex.getMessage() : errorCode.getMessage();
         return ApiResponse.fail(errorCode.getCode(), message);
@@ -54,9 +65,21 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    public ApiResponse<Void> handleUnexpectedException(Exception ex) {
+    public ApiResponse<Void> handleUnexpectedException(Exception ex, HttpServletResponse response) {
+        if (isEventStreamResponse(response)) {
+            log.error("Unhandled exception on SSE response", ex);
+            return null;
+        }
         log.error("Unhandled exception", ex);
         return ApiResponse.fail(ErrorCode.INTERNAL_ERROR.getCode(), XingnaiMessages.aiUnexpected());
+    }
+
+    private boolean isEventStreamResponse(HttpServletResponse response) {
+        if (response == null || response.isCommitted()) {
+            return true;
+        }
+        String contentType = response.getContentType();
+        return contentType != null && contentType.contains(MediaType.TEXT_EVENT_STREAM_VALUE);
     }
 
 }

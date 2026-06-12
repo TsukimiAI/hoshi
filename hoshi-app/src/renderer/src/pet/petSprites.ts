@@ -17,8 +17,23 @@ export const DEFAULT_PET_EMOTION = 'normal'
 
 /** 后端旧版英文 emotion 兼容映射 */
 const LEGACY_EMOTION_MAP: Record<string, string> = {
+  正常: 'normal',
+  开心: 'happy',
+  很高兴: 'very-happy',
+  害羞: 'shy',
+  困惑: 'confused',
+  疑惑: 'doubt',
+  生气: 'angry',
+  难过: 'sad',
+  惊讶: 'shock',
+  期待: 'expect',
+  喜欢: 'like',
+  很喜欢: 'very-like',
   IDLE: 'normal',
   HAPPY: 'happy',
+  THINKING: 'expect',
+  SURPRISED: 'shock',
+  SAD: 'sad',
   SLEEPY: 'wry'
 }
 
@@ -26,8 +41,9 @@ export const PET_EMOTION_LIST = Object.keys(PET_SPRITES).sort()
 
 export function resolvePetEmotion(raw: string | undefined): string {
   if (!raw) return DEFAULT_PET_EMOTION
-  if (raw in PET_SPRITES) return raw
-  if (raw in LEGACY_EMOTION_MAP) return LEGACY_EMOTION_MAP[raw]
+  const normalized = raw.trim()
+  if (normalized in PET_SPRITES) return normalized
+  if (normalized in LEGACY_EMOTION_MAP) return LEGACY_EMOTION_MAP[normalized]
   return DEFAULT_PET_EMOTION
 }
 

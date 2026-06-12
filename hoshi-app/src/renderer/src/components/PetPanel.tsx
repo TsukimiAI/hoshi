@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
+import { useChatMessages } from '../chat/ChatMessagesContext'
 import { useChatSessions } from '../chat/ChatSessionContext'
-import { DEFAULT_PET_EMOTION, getPetSprite, resolvePetEmotion } from '../pet/petSprites'
+import { resolveEmotionFromChatState } from '../pet/petEmotion'
+import { getPetSprite, resolvePetEmotion } from '../pet/petSprites'
 
 function resolveWsUrl(): string {
   const base = window.hoshi.apiBaseUrl
@@ -41,26 +43,59 @@ function formatSessionTime(value: string): string {
 
 export function PetPanel(): React.JSX.Element {
   const { user, requireAuth } = useAuth()
-  const { sessions, loading, error, activeSessionId, selectSession, createSession } = useChatSessions()
-  const [emotion, setEmotion] = useState(DEFAULT_PET_EMOTION)
+  const { sessions, loading, error, activeSessionId, selectSession, createSession, deleteSession } = useChatSessions()
+  const { messages, sending } = useChatMessages()
+  const [emotion, setEmotion] = useState(() => resolveEmotionFromChatState([], false))
   const [sessionsOpen, setSessionsOpen] = useState(false)
+  const petPanelRef = useRef<HTMLElement>(null)
+  const sendingRef = useRef(sending)
+  sendingRef.current = sending
 
   useEffect(() => {
     const socket = new WebSocket(resolveWsUrl())
-
     socket.onmessage = (event) => {
       try {
-        const payload = JSON.parse(String(event.data)) as { emotion?: string }
-        if (payload.emotion) {
-          setEmotion(resolvePetEmotion(payload.emotion))
+        const payload = JSON.parse(event.data as string) as { type?: string; value?: string }
+        if (payload.type !== 'emotion' || !payload.value) {
+          return
         }
+        if (!sendingRef.current) {
+          setEmotion(resolvePetEmotion('normal'))
+          return
+        }
+        setEmotion(resolvePetEmotion(payload.value))
       } catch {
-        // ignore malformed messages
+        // Ignore malformed websocket payloads.
       }
     }
-
     return () => socket.close()
   }, [])
+
+  useEffect(() => {
+    setEmotion(resolveEmotionFromChatState(messages, sending))
+  }, [messages, sending])
+
+  useEffect(() => {
+    if (!sessionsOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: MouseEvent): void => {
+      const target = event.target
+      if (!(target instanceof Node)) {
+        return
+      }
+      if (petPanelRef.current?.contains(target)) {
+        return
+      }
+      setSessionsOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+    }
+  }, [sessionsOpen])
 
   const handleNewSession = (): void => {
     requireAuth(() => {
@@ -77,8 +112,19 @@ export function PetPanel(): React.JSX.Element {
     setSessionsOpen(false)
   }
 
+  const handleDeleteSession = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    sessionId: string
+  ): void => {
+    e.stopPropagation()
+    void deleteSession(sessionId)
+  }
+
   return (
-    <section className={`pet-panel ${sessionsOpen ? 'pet-panel--sessions-open' : ''}`}>
+    <section
+      ref={petPanelRef}
+      className={`pet-panel ${sessionsOpen ? 'pet-panel--sessions-open' : ''}`}
+    >
       <div className="pet-panel__header">
         <div className="pet-panel__header-left">
           <span className={`pet-panel__label ${sessionsOpen ? '' : 'is-visible'}`}>星奈</span>
@@ -142,14 +188,24 @@ export function PetPanel(): React.JSX.Element {
             <ul className="pet-session-list">
               {sessions.map((session) => (
                 <li key={session.id}>
-                  <button
-                    type="button"
-                    className={`pet-session-item ${session.id === activeSessionId ? 'active' : ''}`}
-                    onClick={() => handleSelectSession(session.id)}
-                  >
-                    <span className="pet-session-item__title">{session.title}</span>
-                    <span className="pet-session-item__time">{formatSessionTime(session.updatedAt)}</span>
-                  </button>
+                  <div className={`pet-session-item ${session.id === activeSessionId ? 'active' : ''}`}>
+                    <button
+                      type="button"
+                      className="pet-session-item__main"
+                      onClick={() => handleSelectSession(session.id)}
+                    >
+                      <span className="pet-session-item__title">{session.title}</span>
+                      <span className="pet-session-item__time">{formatSessionTime(session.updatedAt)}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="pet-session-item__delete"
+                      onClick={(e) => handleDeleteSession(e, session.id)}
+                      aria-label={`删除会话 ${session.title}`}
+                    >
+                      删除
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>

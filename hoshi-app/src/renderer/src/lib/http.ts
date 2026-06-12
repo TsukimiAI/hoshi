@@ -80,6 +80,12 @@ export async function apiFetch<T>(
   try {
     payload = JSON.parse(rawBody) as ApiResponse<T>
   } catch {
+    if (response.status === 401) {
+      throw new Error('未登录或登录已过期')
+    }
+    if (response.status === 403) {
+      throw new Error('无访问权限，请重新登录后再试')
+    }
     throw new Error('服务器响应格式错误，请查看后端日志')
   }
   const isUnauthorized =

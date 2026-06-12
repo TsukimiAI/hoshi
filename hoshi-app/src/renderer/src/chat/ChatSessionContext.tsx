@@ -21,7 +21,9 @@ interface ChatSessionContextValue {
   activeSession: ChatSession | null
   selectSession: (sessionId: string) => void
   createSession: (title?: string) => Promise<ChatSession | null>
+  deleteSession: (sessionId: string) => Promise<void>
   refreshSessions: () => Promise<void>
+  updateSessionInList: (session: ChatSession) => void
 }
 
 const ChatSessionContext = createContext<ChatSessionContextValue | null>(null)
@@ -101,15 +103,46 @@ export function ChatSessionProvider({ children }: { children: ReactNode }): Reac
     async (title?: string): Promise<ChatSession | null> => {
       if (!user) return null
 
-      const res = await chatApi.createSession(title)
-      setSessions((prev) => [res.data, ...prev])
-      setActiveSessionId(res.data.id)
-      setStoredActiveSessionId(res.data.id)
-      setError(null)
-      return res.data
+      try {
+        const res = await chatApi.createSession(title)
+        setSessions((prev) => [res.data, ...prev])
+        setActiveSessionId(res.data.id)
+        setStoredActiveSessionId(res.data.id)
+        setError(null)
+        return res.data
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '新建会话失败'
+        setError(message)
+        return null
+      }
     },
     [user]
   )
+
+  const deleteSession = useCallback(
+    async (sessionId: string): Promise<void> => {
+      if (!user) return
+
+      await chatApi.deleteSession(sessionId)
+      setSessions((prev) => {
+        const nextSessions = prev.filter((session) => session.id !== sessionId)
+        const nextActiveId =
+          activeSessionId === sessionId
+            ? nextSessions[0]?.id ?? null
+            : activeSessionId
+
+        setActiveSessionId(nextActiveId)
+        setStoredActiveSessionId(nextActiveId)
+        return nextSessions
+      })
+      setError(null)
+    },
+    [activeSessionId, user]
+  )
+
+  const updateSessionInList = useCallback((session: ChatSession) => {
+    setSessions((prev) => prev.map((item) => (item.id === session.id ? session : item)))
+  }, [])
 
   const activeSession = useMemo(
     () => sessions.find((session) => session.id === activeSessionId) ?? null,
@@ -125,9 +158,11 @@ export function ChatSessionProvider({ children }: { children: ReactNode }): Reac
       activeSession,
       selectSession,
       createSession,
-      refreshSessions
+      deleteSession,
+      refreshSessions,
+      updateSessionInList
     }),
-    [sessions, loading, error, activeSessionId, activeSession, selectSession, createSession, refreshSessions]
+    [sessions, loading, error, activeSessionId, activeSession, selectSession, createSession, deleteSession, refreshSessions, updateSessionInList]
   )
 
   return <ChatSessionContext.Provider value={value}>{children}</ChatSessionContext.Provider>

@@ -10,7 +10,11 @@ public interface ChatMessageService {
 
     List<ChatMessage> listBySession(User user, Long sessionId);
 
-    void sendStream(User user, Long sessionId, String content, ChatStreamSink sink);
+    void sendStream(User user, Long sessionId, String content, boolean webSearch, ChatStreamSink sink);
 
     void retryStream(User user, Long sessionId, ChatStreamSink sink);
+
+    void regenerateStream(User user, Long sessionId, ChatStreamSink sink);
+
+    void deleteMessage(User user, Long sessionId, Long messageId);
 }

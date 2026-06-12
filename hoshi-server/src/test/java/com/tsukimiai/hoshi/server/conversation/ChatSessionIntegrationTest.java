@@ -19,6 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tsukimiai.hoshi.conversation.mapper.ChatMessageMapper;
+import com.tsukimiai.hoshi.conversation.mapper.ChatMessageSegmentMapper;
+import com.tsukimiai.hoshi.conversation.mapper.ChatSessionMapper;
 import com.tsukimiai.hoshi.security.jwt.JwtBlacklistService;
 import com.tsukimiai.hoshi.server.support.InMemoryJwtBlacklistService;
 import com.tsukimiai.hoshi.user.entity.User;
@@ -52,12 +55,24 @@ class ChatSessionIntegrationTest {
     private UserMapper userMapper;
 
     @Autowired
+    private ChatMessageSegmentMapper chatMessageSegmentMapper;
+
+    @Autowired
+    private ChatMessageMapper chatMessageMapper;
+
+    @Autowired
+    private ChatSessionMapper chatSessionMapper;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void seedUsers() {
+        chatMessageSegmentMapper.delete(null);
+        chatMessageMapper.delete(null);
+        chatSessionMapper.delete(null);
         userMapper.delete(null);
 
         insertUser(USERNAME, EMAIL, PASSWORD);

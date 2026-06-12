@@ -16,6 +16,9 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tsukimiai.hoshi.conversation.mapper.ChatMessageMapper;
+import com.tsukimiai.hoshi.conversation.mapper.ChatMessageSegmentMapper;
+import com.tsukimiai.hoshi.conversation.mapper.ChatSessionMapper;
 import com.tsukimiai.hoshi.security.jwt.JwtBlacklistService;
 import com.tsukimiai.hoshi.security.jwt.JwtTokenProvider;
 import com.tsukimiai.hoshi.security.jwt.RedisJwtBlacklistService;
@@ -50,6 +53,15 @@ class RedisJwtBlacklistIntegrationTest {
     private UserMapper userMapper;
 
     @Autowired
+    private ChatMessageSegmentMapper chatMessageSegmentMapper;
+
+    @Autowired
+    private ChatMessageMapper chatMessageMapper;
+
+    @Autowired
+    private ChatSessionMapper chatSessionMapper;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @Autowired
@@ -64,6 +76,9 @@ class RedisJwtBlacklistIntegrationTest {
     @BeforeEach
     void seedUser() {
         stringRedisTemplate.getConnectionFactory().getConnection().serverCommands().flushDb();
+        chatMessageSegmentMapper.delete(null);
+        chatMessageMapper.delete(null);
+        chatSessionMapper.delete(null);
         userMapper.delete(null);
 
         LocalDateTime now = LocalDateTime.now();
@@ -105,7 +120,7 @@ class RedisJwtBlacklistIntegrationTest {
 
         mockMvc.perform(get("/api/v1/auth/me")
                         .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     private org.springframework.test.web.servlet.ResultActions login() throws Exception {
