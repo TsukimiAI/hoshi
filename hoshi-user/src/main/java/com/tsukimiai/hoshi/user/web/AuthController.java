@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.tsukimiai.hoshi.common.api.ApiResponse;
 import com.tsukimiai.hoshi.security.jwt.BearerTokenResolver;
 import com.tsukimiai.hoshi.user.dto.AuthResponse;
+import com.tsukimiai.hoshi.user.dto.ChangePasswordRequest;
 import com.tsukimiai.hoshi.user.dto.ForgotPasswordRequest;
 import com.tsukimiai.hoshi.user.dto.LoginRequest;
 import com.tsukimiai.hoshi.user.dto.LogoutRequest;
@@ -93,6 +94,11 @@ public class AuthController {
             HttpServletRequest httpRequest) {
         String accessToken = BearerTokenResolver.resolve(httpRequest);
         return ApiResponse.ok(userAuthService.logout(request, accessToken));
+    }
+
+    @PostMapping("/change-password")
+    public ApiResponse<MessageResponse> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
+        return ApiResponse.ok(userAuthService.changePassword(request));
     }
 
     @GetMapping("/me")

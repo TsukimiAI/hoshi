@@ -10,4 +10,6 @@ public interface RefreshTokenService {
 
     void revokeToken(String rawToken);
 
+    void revokeAllForUser(Long userId);
+
 }

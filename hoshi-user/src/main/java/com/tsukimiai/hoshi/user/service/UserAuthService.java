@@ -1,6 +1,7 @@
 package com.tsukimiai.hoshi.user.service;
 
 import com.tsukimiai.hoshi.user.dto.AuthResponse;
+import com.tsukimiai.hoshi.user.dto.ChangePasswordRequest;
 import com.tsukimiai.hoshi.user.dto.ForgotPasswordRequest;
 import com.tsukimiai.hoshi.user.dto.LoginRequest;
 import com.tsukimiai.hoshi.user.dto.LogoutRequest;
@@ -39,5 +40,7 @@ public interface UserAuthService {
     MessageResponse logout(LogoutRequest request, String accessToken);
 
     AuthResponse.UserProfile getCurrentUser();
+
+    MessageResponse changePassword(ChangePasswordRequest request);
 
 }

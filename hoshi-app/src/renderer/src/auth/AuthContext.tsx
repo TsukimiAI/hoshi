@@ -9,6 +9,7 @@ import {
   type ReactNode
 } from 'react'
 import * as authApi from '../api/auth'
+import * as userApi from '../api/user'
 import type { UserProfile } from '../types/auth'
 import {
   clearSession,
@@ -38,6 +39,11 @@ interface AuthContextValue {
   ) => Promise<string>
   logout: () => Promise<void>
   requireAuth: (action: () => void) => void
+  refreshUser: () => Promise<void>
+  updateProfile: (username: string) => Promise<void>
+  uploadAvatar: (file: File) => Promise<void>
+  deleteAvatar: () => Promise<void>
+  changePassword: (currentPassword: string, newPassword: string) => Promise<string>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -161,6 +167,52 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
     setUser(null)
   }, [])
 
+  const refreshUser = useCallback(async () => {
+    const res = await authApi.fetchCurrentUser()
+    const token = getAccessToken()
+    const refreshToken = getRefreshToken()
+    if (token && refreshToken) {
+      saveSession(token, refreshToken, res.data)
+    }
+    setUser(res.data)
+  }, [])
+
+  const updateProfile = useCallback(
+    async (username: string) => {
+      await userApi.updateProfile(username)
+      const refreshed = await tryRefreshSession()
+      if (!refreshed) {
+        await refreshUser()
+      }
+    },
+    [refreshUser, tryRefreshSession]
+  )
+
+  const uploadAvatar = useCallback(async (file: File) => {
+    const res = await userApi.uploadAvatar(file)
+    const token = getAccessToken()
+    const refreshToken = getRefreshToken()
+    if (token && refreshToken) {
+      saveSession(token, refreshToken, res.data)
+    }
+    setUser(res.data)
+  }, [])
+
+  const deleteAvatar = useCallback(async () => {
+    const res = await userApi.deleteAvatar()
+    const token = getAccessToken()
+    const refreshToken = getRefreshToken()
+    if (token && refreshToken) {
+      saveSession(token, refreshToken, res.data)
+    }
+    setUser(res.data)
+  }, [])
+
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    const res = await userApi.changePassword(currentPassword, newPassword)
+    return res.data.message
+  }, [])
+
   const requireAuth = useCallback(
     (action: () => void) => {
       if (user) {
@@ -184,7 +236,12 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
       login,
       register,
       logout,
-      requireAuth
+      requireAuth,
+      refreshUser,
+      updateProfile,
+      uploadAvatar,
+      deleteAvatar,
+      changePassword
     }),
     [
       user,
@@ -197,7 +254,12 @@ export function AuthProvider({ children }: { children: ReactNode }): React.JSX.E
       login,
       register,
       logout,
-      requireAuth
+      requireAuth,
+      refreshUser,
+      updateProfile,
+      uploadAvatar,
+      deleteAvatar,
+      changePassword
     ]
   )
 

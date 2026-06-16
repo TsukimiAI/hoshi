@@ -22,6 +22,10 @@ public class ChatMessage {
 
     private String emotion;
 
+    private Boolean webSearchEnabled;
+
+    private String messageSource;
+
     @TableField(exist = false)
     private List<ChatMessageSegment> segments;
 
@@ -65,6 +69,22 @@ public class ChatMessage {
 
     public void setEmotion(String emotion) {
         this.emotion = emotion;
+    }
+
+    public Boolean getWebSearchEnabled() {
+        return webSearchEnabled;
+    }
+
+    public void setWebSearchEnabled(Boolean webSearchEnabled) {
+        this.webSearchEnabled = webSearchEnabled;
+    }
+
+    public String getMessageSource() {
+        return messageSource;
+    }
+
+    public void setMessageSource(String messageSource) {
+        this.messageSource = messageSource;
     }
 
     public List<ChatMessageSegment> getSegments() {

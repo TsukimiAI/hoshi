@@ -1,1 +1,2 @@
 com.tsukimiai.hoshi.infrastructure.config.MybatisPlusConfiguration
+com.tsukimiai.hoshi.infrastructure.config.StorageConfiguration

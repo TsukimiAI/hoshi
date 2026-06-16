@@ -1,37 +1,32 @@
 package com.tsukimiai.hoshi.ai.service.impl;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import com.tsukimiai.hoshi.ai.cognition.AiCognitionInput;
+import com.tsukimiai.hoshi.ai.cognition.AiCognitionResult;
+import com.tsukimiai.hoshi.ai.cognition.AiCognitionStatus;
+import com.tsukimiai.hoshi.ai.cognition.AiCognitionTask;
+import com.tsukimiai.hoshi.ai.cognition.AiCognitionTaskType;
+import com.tsukimiai.hoshi.ai.cognition.EmotionClassificationResult;
+import com.tsukimiai.hoshi.ai.cognition.SessionTitleSuggestionResult;
 import com.tsukimiai.hoshi.ai.config.HoshiAiProperties;
+import com.tsukimiai.hoshi.ai.model.AiChatContext;
+import com.tsukimiai.hoshi.ai.model.AiChatRequest;
 import com.tsukimiai.hoshi.ai.model.AiChatTurn;
 import com.tsukimiai.hoshi.ai.service.XingnaiChatService;
 import com.tsukimiai.hoshi.common.exception.AiServiceException;
-import com.tsukimiai.hoshi.common.exception.BusinessException;
-import com.tsukimiai.hoshi.common.exception.ErrorCode;
 
 import reactor.core.publisher.Flux;
 
@@ -40,26 +35,15 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
 
     private static final Logger log = LoggerFactory.getLogger(XingnaiChatServiceImpl.class);
     private static final Duration STREAM_TIMEOUT = Duration.ofMinutes(2);
-    private static final Pattern CODE_KEYWORD_PATTERN = Pattern.compile(
-            "\\b(public|private|class|interface|enum|void|return|import|const|let|var|function|def|SELECT|INSERT|UPDATE|DELETE|FROM|WHERE)\\b",
-            Pattern.CASE_INSENSITIVE);
-    private static final Map<String, String> EMOTION_ALIASES = Map.ofEntries(
-            Map.entry("正常", "normal"),
-            Map.entry("开心", "happy"),
-            Map.entry("很高兴", "very-happy"),
-            Map.entry("害羞", "shy"),
-            Map.entry("困惑", "confused"),
-            Map.entry("疑惑", "doubt"),
-            Map.entry("生气", "angry"),
-            Map.entry("难过", "sad"),
-            Map.entry("惊讶", "shock"),
-            Map.entry("期待", "expect"),
-            Map.entry("喜欢", "like"),
-            Map.entry("很喜欢", "very-like"));
 
     private final ObjectProvider<ChatModel> chatModelProvider;
     private final HoshiAiProperties hoshiAiProperties;
     private final String chatModel;
+    private final AiPromptFactory promptFactory;
+    private final AiCognitionPayloadParser payloadParser;
+    private final AiEmotionSupport emotionSupport;
+    private final AiStreamSupport streamSupport;
+    private final AiCognitionTaskRunner cognitionTaskRunner;
 
     public XingnaiChatServiceImpl(
             ObjectProvider<ChatModel> chatModelProvider,
@@ -68,20 +52,29 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
         this.chatModelProvider = chatModelProvider;
         this.hoshiAiProperties = hoshiAiProperties;
         this.chatModel = chatModel;
+        this.promptFactory = new AiPromptFactory(hoshiAiProperties, chatModel);
+        this.payloadParser = new AiCognitionPayloadParser();
+        this.emotionSupport = new AiEmotionSupport();
+        this.streamSupport = new AiStreamSupport();
+        this.cognitionTaskRunner = new AiCognitionTaskRunner(
+                promptFactory, payloadParser, emotionSupport, streamSupport, STREAM_TIMEOUT);
     }
 
     @Override
     public String complete(List<AiChatTurn> history) {
-        ChatModel chatModel = requireChatModel();
-        Prompt prompt = buildPrompt(history);
+        return complete(toRequest(history, false));
+    }
+
+    @Override
+    public String complete(AiChatRequest request) {
+        ChatModel model = requireChatModel();
+        Prompt prompt = promptFactory.buildChatPrompt(request);
         try {
-            String reply = chatModel.call(prompt).getResult().getOutput().getText();
+            String reply = model.call(prompt).getResult().getOutput().getText();
             if (!StringUtils.hasText(reply)) {
                 throw AiServiceException.emptyResponse();
             }
             return reply.trim();
-        } catch (BusinessException ex) {
-            throw ex;
         } catch (Exception ex) {
             log.warn("AI completion failed", ex);
             throw AiServiceException.unavailable(ex);
@@ -95,38 +88,43 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
 
     @Override
     public Flux<String> stream(List<AiChatTurn> history, boolean webSearch) {
-        ChatModel chatModel = requireChatModel();
-        Prompt prompt = buildPrompt(history, webSearch);
+        return stream(toRequest(history, webSearch));
+    }
+
+    @Override
+    public Flux<String> stream(AiChatRequest request) {
+        ChatModel model = requireChatModel();
+        Prompt prompt = promptFactory.buildChatPrompt(request);
         AtomicReference<String> accumulated = new AtomicReference<>("");
-        return chatModel.stream(prompt)
+        return model.stream(prompt)
                 .timeout(STREAM_TIMEOUT)
-                .mapNotNull(chunk -> toDelta(chunk, accumulated))
+                .mapNotNull(chunk -> streamSupport.toDelta(chunk, accumulated))
                 .filter(StringUtils::hasText)
                 .onErrorMap(ex -> {
-                    log.warn("AI stream failed: {}", rootCauseMessage(ex), ex);
+                    log.warn("AI stream failed: {}", streamSupport.rootCauseMessage(ex), ex);
                     return AiServiceException.unavailable(ex);
                 });
     }
 
     @Override
     public String suggestSessionTitle(String userMessage, String assistantReply) {
-        ChatModel chatModel = requireChatModel();
-        String promptText = hoshiAiProperties.formatTitleUserPrompt(userMessage, assistantReply);
-        Prompt prompt = new Prompt(List.of(
-                new SystemMessage(hoshiAiProperties.getTitleSystemPrompt()),
-                new UserMessage(promptText)));
-        try {
-            String title = chatModel.call(prompt).getResult().getOutput().getText();
-            if (!StringUtils.hasText(title)) {
-                return null;
-            }
-            return sanitizeTitle(title);
-        } catch (BusinessException ex) {
-            throw ex;
-        } catch (Exception ex) {
-            log.warn("AI session title generation failed", ex);
-            return null;
+        AiCognitionTask task = new AiCognitionTask(
+                null,
+                AiCognitionTaskType.SESSION_TITLE,
+                null,
+                null,
+                "session_title_request",
+                new AiCognitionInput(
+                        List.of(
+                                new AiChatTurn("user", userMessage),
+                                new AiChatTurn("assistant", assistantReply)),
+                        null,
+                        Map.of()));
+        AiCognitionResult result = runCognitionTask(task);
+        if (result.result() instanceof SessionTitleSuggestionResult payload) {
+            return payload.title();
         }
+        return null;
     }
 
     @Override
@@ -134,218 +132,54 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
         if (!StringUtils.hasText(assistantReply) || allowedEmotions == null || allowedEmotions.isEmpty()) {
             return null;
         }
-        if (looksLikeCodeContent(assistantReply) && allowedEmotions.contains("normal")) {
+        if (emotionSupport.looksLikeCodeContent(assistantReply) && allowedEmotions.contains("normal")) {
             return "normal";
         }
+        AiCognitionTask task = new AiCognitionTask(
+                null,
+                AiCognitionTaskType.EMOTION_CLASSIFICATION,
+                null,
+                null,
+                "assistant_sentence_emotion",
+                new AiCognitionInput(
+                        List.of(new AiChatTurn("assistant", assistantReply)),
+                        null,
+                        Map.of("allowedEmotions", allowedEmotions)));
+        AiCognitionResult result = runCognitionTask(task);
+        if (result.result() instanceof EmotionClassificationResult payload) {
+            return payload.emotion();
+        }
+        return null;
+    }
 
-        ChatModel model = requireChatModel();
-        String candidates = String.join(",", allowedEmotions);
-        Prompt prompt = new Prompt(
-                List.of(
-                        new SystemMessage(hoshiAiProperties.formatEmotionSystemPrompt(candidates)),
-                        new UserMessage(assistantReply.trim())),
-                OpenAiChatOptions.builder()
-                        .model(hoshiAiProperties.resolveEmotionModel(this.chatModel))
-                        .build());
+    @Override
+    public AiCognitionResult runCognitionTask(AiCognitionTask task) {
         try {
-            String emotion = model.call(prompt).getResult().getOutput().getText();
-            return resolveAllowedEmotion(emotion, allowedEmotions);
-        } catch (BusinessException ex) {
-            throw ex;
+            return cognitionTaskRunner.run(task, requireChatModel(), chatModel);
         } catch (Exception ex) {
-            log.warn("AI emotion classification failed", ex);
-            return null;
+            log.warn("AI cognition task {} failed: {}", task.taskType(), ex.getMessage(), ex);
+            return new AiCognitionResult(
+                    task.taskId(),
+                    task.taskType(),
+                    AiCognitionStatus.FAILED,
+                    chatModel,
+                    null,
+                    List.of(ex.getMessage() == null ? ex.toString() : ex.getMessage()),
+                    null);
         }
-    }
-
-    private String sanitizeTitle(String title) {
-        String normalized = title.trim()
-                .replaceAll("[\"'「」『』]", "")
-                .replaceAll("[\\r\\n]+", " ")
-                .strip();
-        if (normalized.length() > 32) {
-            normalized = normalized.substring(0, 32).trim();
-        }
-        return StringUtils.hasText(normalized) ? normalized : null;
-    }
-
-    private String sanitizeEmotionValue(String emotion) {
-        String normalized = emotion.trim()
-                .replaceAll("[\"'`“”‘’]", "")
-                .replace('_', '-')
-                .replaceAll("[\\r\\n]+", " ")
-                .replaceAll("\\s+", "-")
-                .toLowerCase(Locale.ROOT)
-                .replaceAll("^[^a-z-]+", "")
-                .replaceAll("[^a-z-]+$", "");
-        return StringUtils.hasText(normalized) ? normalized : null;
-    }
-
-    private String resolveAllowedEmotion(String raw, List<String> allowedEmotions) {
-        if (!StringUtils.hasText(raw) || allowedEmotions == null || allowedEmotions.isEmpty()) {
-            return null;
-        }
-        String trimmed = raw.trim();
-        String sanitized = sanitizeEmotionValue(trimmed);
-        if (StringUtils.hasText(sanitized)) {
-            for (String allowed : allowedEmotions) {
-                if (allowed.equalsIgnoreCase(sanitized)) {
-                    return allowed;
-                }
-            }
-        }
-        String alias = EMOTION_ALIASES.get(trimmed);
-        if (alias != null && allowedEmotions.contains(alias)) {
-            return alias;
-        }
-        for (String allowed : allowedEmotions) {
-            if (trimmed.equalsIgnoreCase(allowed)) {
-                return allowed;
-            }
-        }
-        String lowered = trimmed.toLowerCase(Locale.ROOT);
-        return allowedEmotions.stream()
-                .sorted(Comparator.comparingInt(String::length).reversed())
-                .filter(allowed -> lowered.contains(allowed.toLowerCase(Locale.ROOT)))
-                .findFirst()
-                .orElse(null);
-    }
-
-    private boolean looksLikeCodeContent(String text) {
-        String trimmed = text.trim();
-        if (trimmed.startsWith("```") || trimmed.contains("\n```") || trimmed.contains("`")) {
-            return true;
-        }
-
-        int codeSignals = 0;
-        if (trimmed.contains("->") || trimmed.contains("::") || trimmed.contains("()")) {
-            codeSignals++;
-        }
-        if (trimmed.contains("{") || trimmed.contains("}") || trimmed.contains(";")) {
-            codeSignals++;
-        }
-        if (trimmed.contains(" = ") || trimmed.contains("==") || trimmed.contains("!=")) {
-            codeSignals++;
-        }
-        if (trimmed.contains("<") && trimmed.contains(">")) {
-            codeSignals++;
-        }
-        if (CODE_KEYWORD_PATTERN.matcher(trimmed).find()) {
-            codeSignals++;
-        }
-
-        long symbolCount = trimmed.chars()
-                .filter(ch -> "{}[]();<>=`/\\_".indexOf(ch) >= 0)
-                .count();
-        double symbolRatio = trimmed.isEmpty() ? 0 : (double) symbolCount / trimmed.length();
-        if (isMostlyNaturalLanguage(trimmed) && codeSignals < 3) {
-            return false;
-        }
-
-        return codeSignals >= 2 || symbolRatio > 0.12;
-    }
-
-    private boolean isMostlyNaturalLanguage(String text) {
-        long letterCount = text.codePoints()
-                .filter(Character::isLetter)
-                .count();
-        if (letterCount == 0) {
-            return false;
-        }
-        long cjkCount = text.codePoints()
-                .filter(ch -> Character.UnicodeScript.of(ch) == Character.UnicodeScript.HAN)
-                .count();
-        return cjkCount >= letterCount / 2;
     }
 
     private ChatModel requireChatModel() {
-        ChatModel chatModel = chatModelProvider.getIfAvailable();
-        if (chatModel == null) {
+        ChatModel model = chatModelProvider.getIfAvailable();
+        if (model == null) {
             throw AiServiceException.unavailable();
         }
-        return chatModel;
+        return model;
     }
 
-    private Prompt buildPrompt(List<AiChatTurn> history) {
-        return buildPrompt(history, false);
-    }
-
-    private Prompt buildPrompt(List<AiChatTurn> history, boolean webSearch) {
-        List<Message> messages = new ArrayList<>();
-        messages.add(new SystemMessage(hoshiAiProperties.buildSystemPrompt(webSearch)));
-        for (AiChatTurn turn : history) {
-            if (!StringUtils.hasText(turn.content())) {
-                continue;
-            }
-            if ("user".equalsIgnoreCase(turn.role())) {
-                messages.add(new UserMessage(turn.content().trim()));
-            } else if ("assistant".equalsIgnoreCase(turn.role())) {
-                messages.add(new AssistantMessage(turn.content().trim()));
-            }
-        }
-        if (messages.size() <= 1) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "没有可发送的对话内容");
-        }
-        ChatOptions chatOptions = buildWebSearchChatOptions(webSearch);
-        if (chatOptions == null) {
-            return new Prompt(messages);
-        }
-        return new Prompt(messages, chatOptions);
-    }
-
-    private ChatOptions buildWebSearchChatOptions(boolean webSearch) {
-        if (!webSearch || !hoshiAiProperties.isWebSearchEnabled()) {
-            return null;
-        }
-        return OpenAiChatOptions.builder()
-                .model(chatModel)
-                .extraBody(hoshiAiProperties.buildWebSearchExtraBody(webSearch, chatModel))
-                .build();
-    }
-
-    private String rootCauseMessage(Throwable ex) {
-        Throwable current = ex;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current.getMessage() != null ? current.getMessage() : ex.toString();
-    }
-
-    private String toDelta(ChatResponse chunk, AtomicReference<String> accumulated) {
-        String current = extractChunkText(chunk);
-        if (!StringUtils.hasText(current)) {
-            return null;
-        }
-
-        String previous = accumulated.get();
-        String delta;
-        if (current.startsWith(previous)) {
-            delta = current.substring(previous.length());
-            accumulated.set(current);
-        } else {
-            delta = current;
-            accumulated.updateAndGet(existing -> existing + current);
-        }
-        return StringUtils.hasText(delta) ? delta : null;
-    }
-
-    private String extractChunkText(ChatResponse chunk) {
-        if (chunk.getResult() != null && chunk.getResult().getOutput() != null) {
-            String text = chunk.getResult().getOutput().getText();
-            if (StringUtils.hasText(text)) {
-                return text;
-            }
-        }
-        StringBuilder builder = new StringBuilder();
-        for (Generation generation : chunk.getResults()) {
-            if (generation.getOutput() == null) {
-                continue;
-            }
-            String text = generation.getOutput().getText();
-            if (StringUtils.hasText(text)) {
-                builder.append(text);
-            }
-        }
-        return builder.isEmpty() ? null : builder.toString();
+    private AiChatRequest toRequest(List<AiChatTurn> history, boolean webSearch) {
+        return new AiChatRequest(
+                new AiChatContext(history, null, List.of(), List.of(), List.of(), hoshiAiProperties.resolvePromptBudget()),
+                webSearch);
     }
 }

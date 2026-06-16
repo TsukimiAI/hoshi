@@ -88,6 +88,21 @@ class ChatMessageIntegrationTest {
     }
 
     @Test
+    void sendMessagePersistsWebSearchEnabledOnUserMessage() throws Exception {
+        String accessToken = loginAndGetAccessToken();
+        String sessionId = createSession(accessToken);
+
+        postMessage(accessToken, sessionId, "今天天气怎么样？", true);
+
+        mockMvc.perform(get("/api/v1/chat/sessions/{id}/messages", sessionId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].role").value("user"))
+                .andExpect(jsonPath("$.data[0].webSearchEnabled").value(true))
+                .andExpect(jsonPath("$.data[1].webSearchEnabled").value(false));
+    }
+
+    @Test
     void sendMessageStreamsUserAndAssistantReplies() throws Exception {
         String accessToken = loginAndGetAccessToken();
         String sessionId = objectMapper.readTree(mockMvc.perform(get("/api/v1/chat/sessions")
@@ -122,6 +137,9 @@ class ChatMessageIntegrationTest {
         assertThat(body).contains("event:segment_delta");
         assertThat(body).contains("event:segment_done");
         assertThat(body).contains("event:done");
+        assertThat(body).contains("event:memory");
+        assertThat(body).contains("老师最近在准备聊天功能");
+        assertThat(body).contains("\"eventType\":\"created\"");
         assertThat(body).contains("太好了，我们出发吧。");
         assertThat(body).contains("等等，你刚才是说明天吗？");
         assertThat(body).contains("\"emotion\":\"happy\"");
@@ -169,6 +187,11 @@ class ChatMessageIntegrationTest {
     }
 
     private String postMessage(String accessToken, String sessionId, String content) throws Exception {
+        return postMessage(accessToken, sessionId, content, false);
+    }
+
+    private String postMessage(String accessToken, String sessionId, String content, boolean webSearch)
+            throws Exception {
         return new String(
                 mockMvc.perform(post("/api/v1/chat/sessions/{id}/messages", sessionId)
                                 .header("Authorization", "Bearer " + accessToken)
@@ -176,9 +199,10 @@ class ChatMessageIntegrationTest {
                                 .accept(MediaType.TEXT_EVENT_STREAM)
                                 .content("""
                                         {
-                                          "content": "%s"
+                                          "content": "%s",
+                                          "webSearch": %s
                                         }
-                                        """.formatted(content)))
+                                        """.formatted(content, webSearch)))
                         .andExpect(status().isOk())
                         .andReturn()
                         .getResponse()

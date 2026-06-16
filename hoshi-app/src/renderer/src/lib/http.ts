@@ -30,8 +30,11 @@ export function notifyApiUnauthorized(): void {
   onUnauthorized?.()
 }
 
+import { API_BASE_URL_STORAGE_KEY } from '../settings/appPreferences'
+
 export function resolveApiUrl(path: string): string {
-  const base = window.hoshi.apiBaseUrl.replace(/\/$/, '')
+  const stored = localStorage.getItem(API_BASE_URL_STORAGE_KEY)
+  const base = (stored || window.hoshi.apiBaseUrl).replace(/\/$/, '')
   return `${base}${path}`
 }
 

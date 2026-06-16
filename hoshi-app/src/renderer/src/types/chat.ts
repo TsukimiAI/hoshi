@@ -10,6 +10,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   emotion: string | null
+  webSearchEnabled?: boolean
   segments: ChatMessageSegment[]
   createdAt: string
 }
