@@ -2,13 +2,19 @@ import { FormEvent, KeyboardEvent, useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import { useChatMessages } from '../chat/ChatMessagesContext'
 import { useChatSessions } from '../chat/ChatSessionContext'
+import { sendShortcutHint, shouldSubmitOnKeyDown } from '../chat/inputBehavior'
+import { useWebSearchToggle } from '../chat/useWebSearchToggle'
+import { useAppPreferences } from '../settings/useAppPreferences'
+import { WebSearchBadge } from './WebSearchBadge'
 
 export function Composer(): React.JSX.Element {
   const { user, requireAuth } = useAuth()
   const { activeSession } = useChatSessions()
   const { sendMessage, stopStreaming, sending } = useChatMessages()
+  const { preferences } = useAppPreferences()
+  const { active: webSearch, locked: webSearchLocked, title: webSearchTitle, toggle: toggleWebSearch } =
+    useWebSearchToggle()
   const [text, setText] = useState('')
-  const [webSearch, setWebSearch] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const submit = (): void => {
@@ -35,7 +41,7 @@ export function Composer(): React.JSX.Element {
   }
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) {
+    if (!shouldSubmitOnKeyDown(e, preferences.sendShortcut)) {
       return
     }
     e.preventDefault()
@@ -50,9 +56,16 @@ export function Composer(): React.JSX.Element {
   }
 
   const canSend = Boolean(user && activeSession && text.trim() && !sending)
+  const sessionBlocked = Boolean(user) && (!activeSession || sending)
 
   return (
     <form className="composer" onSubmit={handleSubmit}>
+      {webSearch ? (
+        <div className="composer__status-row">
+          <WebSearchBadge label="本次将联网" />
+        </div>
+      ) : null}
+      <div className="composer__main">
       <div className={`composer__field ${user ? '' : 'composer__field--locked'}`}>
         <textarea
           ref={textareaRef}
@@ -66,7 +79,7 @@ export function Composer(): React.JSX.Element {
               ? activeSession
                 ? sending
                   ? '星奈正在思考…'
-                  : '输入消息，Enter 发送，Shift+Enter 换行…'
+                  : `输入消息，${sendShortcutHint(preferences.sendShortcut)}`
                 : '请先选择或创建会话…'
               : '登录后即可开始对话…'
           }
@@ -79,11 +92,12 @@ export function Composer(): React.JSX.Element {
       </div>
       <button
         type="button"
-        className={`composer__web-search ${webSearch ? 'is-active' : ''}`}
+        className={`composer__web-search ${webSearch ? 'is-active' : ''} ${webSearchLocked ? 'is-locked' : ''}`.trim()}
         aria-pressed={webSearch}
-        disabled={Boolean(user) && (!activeSession || sending)}
-        title="开启后星奈可检索近期网络信息"
-        onClick={() => setWebSearch((current) => !current)}
+        aria-disabled={webSearchLocked}
+        disabled={sessionBlocked && !webSearchLocked}
+        title={webSearchTitle}
+        onClick={webSearchLocked ? undefined : toggleWebSearch}
       >
         联网
       </button>
@@ -96,6 +110,7 @@ export function Composer(): React.JSX.Element {
           发送
         </button>
       )}
+      </div>
     </form>
   )
 }

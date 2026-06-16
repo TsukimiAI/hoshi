@@ -20,3 +20,7 @@ hoshi:
   security:
     jwt:
       secret: test-secret-key-for-unit-tests-at-least-256-bits-long
+  storage:
+    minio:
+      enabled: false
+      public-base-url: http://localhost:9000/hoshi

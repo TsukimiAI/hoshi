@@ -4,6 +4,8 @@ export interface UserProfile {
   email: string
   avatarUrl: string | null
   emailVerified: boolean
+  createdAt?: string | null
+  lastLoginAt?: string | null
 }
 
 export interface AuthSession {

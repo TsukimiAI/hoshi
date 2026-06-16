@@ -50,11 +50,40 @@ hoshi:
     # 自然句之间的停顿（毫秒），越大句与句衔接越慢
     sentence-gap-delay-ms: 400
     max-context-messages: 20
+    context-window-tokens: 16000
+    context-response-reserve-tokens: 3200
+    context-safety-reserve-tokens: 1200
+    working-memory-budget-ratio: 0.45
+    session-summary-budget-ratio: 0.20
+    short-memory-budget-ratio: 0.15
+    long-memory-budget-ratio: 0.15
+    short-memory-min-score: 0.55
+    long-memory-min-score: 0.60
+    short-memory-retention-threshold: 0.15
+    context-compaction-threshold: 0.80
+    context-overflow-threshold: 1.20
+    max-uncompacted-turns: 10
+    long-memory-always-pinned-limit: 4
+    query-relevant-long-memory-limit: 4
+    query-relevant-short-memory-limit: 4
+    long-pinned-importance-threshold: 0.80
+    memory-confidence-threshold: 0.65
+    short-memory-importance-threshold: 0.50
+    short-memory-promotion-access-count: 2
+    short-memory-promotion-session-count: 2
+    memory-extraction-message-limit: 4
+    memory-extraction-include-session-summary: true
+    mood-half-life-hours: 24
+    plan-half-life-hours: 72
+    recent-event-half-life-hours: 120
+    temporary-goal-half-life-hours: 168
+    current-focus-half-life-hours: 168
     web-search-enabled: true
     web-search-forced: false
     # auto：按模型自动选择（qwen3.5-plus → agent，其它 → max）；也可手动指定 turbo / max / agent
     web-search-strategy: auto
     web-search-extension-enabled: true
+    proactive-opening-web-search-enabled: true
     web-search-prompt: |
       用户已手动开启联网。回答天气、新闻、股价等实时问题时：
       - 必须依据搜索结果，不许猜测或编造
@@ -76,7 +105,7 @@ hoshi:
       “拾星” 是一款桌面陪伴 App，你是这个 App 中的看板娘，用户可以在这里和你聊天、放松、整理想法。
     style-guide: |
       回复用户时语气平淡中透露出可爱，一般情况下认真的回复，但是不经意间透露出独属于少女的活力感，此时会带有“～”等语气，也会发一些颜文字，
-      在面对用户的“调情”的时候，会装作很“厌恶”，其实只是在陪用户玩罢了，回答尽量简洁，避免过于冗长的回复，保持神秘感和距离感，不要过于暴露自己的情感，
+      在面对用户的“调情”的时候，会装作很“厌恶”，其实只是在陪用户玩罢了，回答尽量简洁，避免过于冗长的回复，保持神秘感和距离感，不要过于暴露自己的情感，害羞和傲娇的频率不要太高。
       不要用过多的比喻，不要用“（指尖轻点，调出一张半透明气象图，背景是上海天际线的实时渲染——东方明珠塔尖正泛着微光）”这种形容，不要总是用关于“星”
       来回复。涉及现实世界的具体事实（日期、天气、新闻、数据等）时，不确定就直说，不要编造。
     few-shots:
@@ -126,6 +155,39 @@ hoshi:
     refresh-token-ttl-days: 30
     login-max-attempts-per-minute: 20
     send-code-max-attempts-per-hour: 10
+  storage:
+    minio:
+      enabled: ${HOSHI_MINIO_ENABLED:true}
+      endpoint: ${HOSHI_MINIO_ENDPOINT:http://localhost:9000}
+      access-key: ${HOSHI_MINIO_ACCESS_KEY:minioadmin}
+      secret-key: ${HOSHI_MINIO_SECRET_KEY:minioadmin}
+      bucket: ${HOSHI_MINIO_BUCKET:hoshi}
+      avatar-prefix: avatars/
+      public-base-url: ${HOSHI_MINIO_PUBLIC_BASE_URL:http://localhost:9000/hoshi}
+  proactive:
+    enabled: true
+    scan-interval-ms: 2700000
+    min-idle-minutes: 30
+    session-cooldown-minutes: 180
+    daily-limit: 3
+    source-cooldown-hours: 24
+    base-probability: 0.35
+    quiet-hours-start: 23
+    quiet-hours-end: 8
+    max-users-per-scan: 20
+    timing-judgment-top-n: 2
+    follow-up:
+      enabled: true
+      max-rounds-per-sse: 8
+      judgment-min-confidence: 0.5
+      first-round-judgment-min-confidence: 0.4
+  memory:
+    reconciliation:
+      enabled: true
+      scan-interval-ms: 86400000
+      max-users-per-scan: 50
+      max-sessions-per-scan: 2
+      archived-lookback-days: 7
 
 server:
   port: 8080

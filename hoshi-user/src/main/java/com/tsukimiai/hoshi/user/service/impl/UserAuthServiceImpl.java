@@ -1,6 +1,7 @@
 package com.tsukimiai.hoshi.user.service.impl;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,6 +17,7 @@ import com.tsukimiai.hoshi.security.jwt.JwtProperties;
 import com.tsukimiai.hoshi.security.jwt.JwtTokenProvider;
 import com.tsukimiai.hoshi.user.config.HoshiAuthProperties;
 import com.tsukimiai.hoshi.user.dto.AuthResponse;
+import com.tsukimiai.hoshi.user.dto.ChangePasswordRequest;
 import com.tsukimiai.hoshi.user.dto.ForgotPasswordRequest;
 import com.tsukimiai.hoshi.user.dto.LoginRequest;
 import com.tsukimiai.hoshi.user.dto.LogoutRequest;
@@ -252,6 +254,34 @@ public class UserAuthServiceImpl implements UserAuthService {
         return toUserProfile(user);
     }
 
+    @Override
+    @Transactional
+    public MessageResponse changePassword(ChangePasswordRequest request) {
+        User user = requireAuthenticatedUser();
+        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "当前密码不正确");
+        }
+        updatePassword(user, request.newPassword());
+        refreshTokenService.revokeAllForUser(user.getId());
+        return new MessageResponse("密码修改成功，请重新登录");
+    }
+
+    private User requireAuthenticatedUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+        String username = authentication.getName();
+        if (username == null || username.isBlank()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+        User user = userMapper.selectOne(Wrappers.<User>lambdaQuery().eq(User::getUsername, username));
+        if (user == null) {
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+        }
+        return user;
+    }
+
     private void updatePassword(User user, String newPassword) {
         LocalDateTime now = LocalDateTime.now();
         user.setPasswordHash(passwordEncoder.encode(newPassword));
@@ -290,7 +320,16 @@ public class UserAuthServiceImpl implements UserAuthService {
                 user.getUsername(),
                 user.getEmail(),
                 user.getAvatarUrl(),
-                user.hasVerifiedEmail());
+                user.hasVerifiedEmail(),
+                formatDateTime(user.getCreatedAt()),
+                formatDateTime(user.getLastLoginAt()));
+    }
+
+    private String formatDateTime(LocalDateTime value) {
+        if (value == null) {
+            return null;
+        }
+        return value.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
     }
 
 }

@@ -1,9 +1,5 @@
 import { ElectronAPI } from '@electron-toolkit/preload'
-
-export interface HoshiDesktopApi {
-  platform: string
-  apiBaseUrl: string
-}
+import type { HoshiDesktopApi } from '../shared/desktop'
 
 declare global {
   interface Window {

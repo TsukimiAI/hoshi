@@ -7,6 +7,7 @@ import {
 } from '../lib/http'
 import { readSseStream } from '../lib/sse'
 import type { ChatMessage, ChatSession } from '../types/chat'
+import type { RecentMemory } from '../types/memory'
 
 export const PENDING_ASSISTANT_ID = '__pending_assistant__'
 
@@ -17,13 +18,27 @@ export interface ChatStreamHandlers {
   onSegmentDelta: (segment: { seq: number; content: string }) => void
   onSegmentDone?: (segment: { seq: number; content: string; emotion: string }) => void
   onDone: (message: ChatMessage) => void
+  onFollowUpStart?: (payload: { round: number; mode: string }) => void
+  onFollowUpSegmentStart?: (segment: { seq: number; emotion: string; contentLength: number }) => void
+  onFollowUpSegmentEmotion?: (segment: { seq: number; emotion: string }) => void
+  onFollowUpSegmentDelta?: (segment: { seq: number; content: string }) => void
+  onFollowUpSegmentDone?: (segment: { seq: number; content: string; emotion: string }) => void
+  onFollowUpDone?: (message: ChatMessage) => void
+  onFollowUpEnd?: (payload: { totalRounds: number; endReason: string }) => void
+  onMemory?: (memories: RecentMemory[]) => void
   onSession?: (session: ChatSession) => void
   onError?: (message: string) => void
+}
+
+export interface ChatPlaybackOptions {
+  sentencePlaybackCharDelayMs?: number
+  sentenceGapDelayMs?: number
 }
 
 export interface ChatStreamOptions {
   signal?: AbortSignal
   retried?: boolean
+  playback?: ChatPlaybackOptions
 }
 
 export function fetchSessions() {
@@ -58,7 +73,7 @@ export function fetchMessages(sessionId: string) {
   return apiFetch<ChatMessage[]>(`/api/v1/chat/sessions/${sessionId}/messages`)
 }
 
-export interface SendMessageBody {
+export interface SendMessageBody extends ChatPlaybackOptions {
   content: string
   webSearch?: boolean
 }
@@ -69,10 +84,14 @@ export async function sendMessageStream(
   handlers: ChatStreamHandlers,
   options: ChatStreamOptions & { webSearch?: boolean } = {}
 ): Promise<void> {
-  const { webSearch, ...streamOptions } = options
+  const { webSearch, playback, ...streamOptions } = options
   return consumeMessageStream(
     `/api/v1/chat/sessions/${sessionId}/messages`,
-    { content, webSearch: webSearch === true },
+    {
+      content,
+      webSearch: webSearch === true,
+      ...playback
+    },
     handlers,
     streamOptions
   )
@@ -83,11 +102,12 @@ export async function retryMessageStream(
   handlers: ChatStreamHandlers,
   options: ChatStreamOptions = {}
 ): Promise<void> {
+  const { playback, ...streamOptions } = options
   return consumeMessageStream(
     `/api/v1/chat/sessions/${sessionId}/messages/retry`,
-    undefined,
+    playback,
     handlers,
-    options
+    streamOptions
   )
 }
 
@@ -96,11 +116,12 @@ export async function regenerateMessageStream(
   handlers: ChatStreamHandlers,
   options: ChatStreamOptions = {}
 ): Promise<void> {
+  const { playback, ...streamOptions } = options
   return consumeMessageStream(
     `/api/v1/chat/sessions/${sessionId}/messages/regenerate`,
-    undefined,
+    playback,
     handlers,
-    options
+    streamOptions
   )
 }
 
@@ -112,7 +133,7 @@ export function deleteMessage(sessionId: string, messageId: string) {
 
 async function consumeMessageStream(
   path: string,
-  body: SendMessageBody | undefined,
+  body: SendMessageBody | ChatPlaybackOptions | undefined,
   handlers: ChatStreamHandlers,
   options: ChatStreamOptions
 ): Promise<void> {
@@ -121,7 +142,8 @@ async function consumeMessageStream(
     method: 'POST',
     headers: {
       ...buildAuthHeaders(),
-      Accept: 'text/event-stream'
+      Accept: 'text/event-stream',
+      ...(body ? { 'Content-Type': 'application/json' } : {})
     },
     body: body ? JSON.stringify(body) : undefined,
     signal: options.signal
@@ -172,6 +194,44 @@ async function consumeMessageStream(
     }
     if (event === 'done') {
       handlers.onDone(JSON.parse(data) as ChatMessage)
+      return
+    }
+    if (event === 'follow_up_start') {
+      handlers.onFollowUpStart?.(JSON.parse(data) as { round: number; mode: string })
+      return
+    }
+    if (event === 'follow_up_segment_start') {
+      handlers.onFollowUpSegmentStart?.(
+        JSON.parse(data) as { seq: number; emotion: string; contentLength: number }
+      )
+      return
+    }
+    if (event === 'follow_up_segment_emotion') {
+      handlers.onFollowUpSegmentEmotion?.(JSON.parse(data) as { seq: number; emotion: string })
+      return
+    }
+    if (event === 'follow_up_segment_delta') {
+      handlers.onFollowUpSegmentDelta?.(JSON.parse(data) as { seq: number; content: string })
+      return
+    }
+    if (event === 'follow_up_segment_done') {
+      handlers.onFollowUpSegmentDone?.(
+        JSON.parse(data) as { seq: number; content: string; emotion: string }
+      )
+      return
+    }
+    if (event === 'follow_up_done') {
+      handlers.onFollowUpDone?.(JSON.parse(data) as ChatMessage)
+      return
+    }
+    if (event === 'follow_up_end') {
+      handlers.onFollowUpEnd?.(
+        JSON.parse(data) as { totalRounds: number; endReason: string }
+      )
+      return
+    }
+    if (event === 'memory') {
+      handlers.onMemory?.(JSON.parse(data) as RecentMemory[])
       return
     }
     if (event === 'session') {

@@ -11,7 +11,16 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.beans.factory.ObjectProvider;
 
+import com.tsukimiai.hoshi.ai.cognition.ProactiveOpeningResult;
+import com.tsukimiai.hoshi.ai.cognition.AiCognitionInput;
+import com.tsukimiai.hoshi.ai.cognition.AiCognitionTask;
+import com.tsukimiai.hoshi.ai.cognition.AiCognitionTaskType;
+import com.tsukimiai.hoshi.ai.cognition.MemoryExtractionResult;
+import com.tsukimiai.hoshi.ai.cognition.SessionCompactionResult;
 import com.tsukimiai.hoshi.ai.config.HoshiAiProperties;
+import com.tsukimiai.hoshi.ai.model.AiChatTurn;
+
+import reactor.core.publisher.Flux;
 
 import org.springframework.ai.openai.OpenAiChatOptions;
 
@@ -107,5 +116,77 @@ class XingnaiChatServiceImplTest {
 
         assertThat(emotion).isEqualTo("happy");
         verify(chatModel).call(any(Prompt.class));
+    }
+
+    @Test
+    void memoryExtractionTaskParsesStructuredJson() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+                new ChatResponse(List.of(new Generation(new AssistantMessage("""
+                        {"memories":[{"content":"老师最近在准备 Java 面试","memoryType":"short","category":"temporary_goal","temporalScope":"recent","confidence":0.91,"importance":0.72,"reason":"近期目标","evidence":{"turnRole":"user","excerpt":"我最近在准备 Java 面试"}}]}
+                        """)))));
+
+        var result = service.runCognitionTask(new AiCognitionTask(
+                null,
+                AiCognitionTaskType.MEMORY_EXTRACTION,
+                1L,
+                2L,
+                "assistant_reply_persisted",
+                new AiCognitionInput(List.of(new AiChatTurn("user", "我最近在准备 Java 面试")), null, java.util.Map.of())));
+
+        assertThat(result.result()).isInstanceOf(MemoryExtractionResult.class);
+        MemoryExtractionResult payload = (MemoryExtractionResult) result.result();
+        assertThat(payload.memories()).hasSize(1);
+        assertThat(payload.memories().get(0).category()).isEqualTo("temporary_goal");
+    }
+
+    @Test
+    void sessionCompactionTaskParsesStructuredJson() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+                new ChatResponse(List.of(new Generation(new AssistantMessage("""
+                        {"summaryVersion":2,"compressedUntilMessageId":12,"summaryText":"聊过面试准备。","facts":["老师最近在准备面试"],"decisions":["先整理项目经历"],"openLoops":["补自我介绍"],"staleItems":[]}
+                        """)))));
+
+        var result = service.runCognitionTask(new AiCognitionTask(
+                null,
+                AiCognitionTaskType.SESSION_COMPACTION,
+                1L,
+                2L,
+                "context_budget_threshold",
+                new AiCognitionInput(List.of(new AiChatTurn("user", "帮我整理一下面试思路")), null, java.util.Map.of())));
+
+        assertThat(result.result()).isInstanceOf(SessionCompactionResult.class);
+        SessionCompactionResult payload = (SessionCompactionResult) result.result();
+        assertThat(payload.summaryText()).contains("面试准备");
+        assertThat(payload.facts()).contains("老师最近在准备面试");
+    }
+
+    @Test
+    void proactiveOpeningWithWebSearchUsesStreamingCall() {
+        HoshiAiProperties properties = new HoshiAiProperties();
+        properties.setProactiveOpeningWebSearchEnabled(true);
+        service = new XingnaiChatServiceImpl(chatModelProvider, properties, "qwen3.7-max");
+
+        when(chatModel.stream(any(Prompt.class))).thenReturn(Flux.just(
+                new ChatResponse(List.of(new Generation(new AssistantMessage(
+                        "{\"content\":\"老师～今天天气挺舒服的\",\"emotion\":\"happy\",\"confidence\":0.9}"))))));
+
+        var result = service.runCognitionTask(new AiCognitionTask(
+                null,
+                AiCognitionTaskType.PROACTIVE_OPENING,
+                1L,
+                2L,
+                "memory:1",
+                new AiCognitionInput(
+                        List.of(),
+                        null,
+                        java.util.Map.of(
+                                "sourceType", "memory",
+                                "memoryCategory", "mood",
+                                "hint", "老师最近有点累"))));
+
+        assertThat(result.result()).isInstanceOf(ProactiveOpeningResult.class);
+        assertThat(((ProactiveOpeningResult) result.result()).content()).contains("天气");
+        verify(chatModel, never()).call(any(Prompt.class));
+        verify(chatModel).stream(any(Prompt.class));
     }
 }

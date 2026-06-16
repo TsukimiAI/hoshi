@@ -10,6 +10,7 @@ public record ChatMessageResponse(
         String role,
         String content,
         String emotion,
+        Boolean webSearchEnabled,
         List<ChatMessageSegmentResponse> segments,
         LocalDateTime createdAt) {
 
@@ -19,6 +20,7 @@ public record ChatMessageResponse(
                 message.getRole(),
                 message.getContent(),
                 message.getEmotion(),
+                Boolean.TRUE.equals(message.getWebSearchEnabled()),
                 message.getSegments() == null ? List.of() : message.getSegments().stream()
                         .map(ChatMessageSegmentResponse::from)
                         .toList(),

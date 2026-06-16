@@ -5,8 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
-import com.tsukimiai.hoshi.companion.model.CompanionEmotion;
-import com.tsukimiai.hoshi.companion.model.CompanionEventSource;
+import com.tsukimiai.hoshi.common.companion.CompanionEmotion;
+import com.tsukimiai.hoshi.common.companion.CompanionEventSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -55,6 +55,26 @@ class CompanionBroadcastServiceImplTest {
                 .contains("\"messageId\":\"42\"")
                 .contains("\"segmentSeq\":2");
         assertThat(broadcastService.getCurrentState().emotion()).isEqualTo(CompanionEmotion.HAPPY);
+    }
+
+    @Test
+    void publishProactiveMessageBroadcastsStructuredPayload() throws Exception {
+        broadcastService.register(session);
+
+        broadcastService.publishProactiveMessage(
+                "xingnai",
+                12L,
+                99L,
+                "老师，面试准备得怎么样了？",
+                "expect");
+
+        verify(session, times(2)).sendMessage(any(TextMessage.class));
+        TextMessage message = captureMessage(2);
+        assertThat(message.getPayload())
+                .contains("\"type\":\"proactive_message\"")
+                .contains("\"sessionId\":\"12\"")
+                .contains("\"messageId\":\"99\"")
+                .contains("面试准备");
     }
 
     private TextMessage captureMessage(int invocation) throws Exception {

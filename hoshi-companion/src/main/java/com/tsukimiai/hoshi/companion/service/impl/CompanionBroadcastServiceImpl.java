@@ -16,9 +16,9 @@ import org.springframework.web.socket.WebSocketSession;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
-import com.tsukimiai.hoshi.companion.model.CompanionEmotion;
-import com.tsukimiai.hoshi.companion.model.CompanionEventSource;
-import com.tsukimiai.hoshi.companion.model.CompanionState;
+import com.tsukimiai.hoshi.common.companion.CompanionEmotion;
+import com.tsukimiai.hoshi.common.companion.CompanionEventSource;
+import com.tsukimiai.hoshi.common.companion.CompanionState;
 import com.tsukimiai.hoshi.companion.service.CompanionBroadcastService;
 import com.tsukimiai.hoshi.companion.ws.CompanionEventMessage;
 
@@ -64,6 +64,16 @@ public class CompanionBroadcastServiceImpl implements CompanionBroadcastService 
                 LocalDateTime.now());
         currentState.set(nextState);
         broadcast(CompanionEventMessage.emotion(nextState));
+    }
+
+    @Override
+    public void publishProactiveMessage(
+            String character,
+            Long sessionId,
+            Long messageId,
+            String content,
+            String emotion) {
+        broadcast(CompanionEventMessage.proactiveMessage(character, sessionId, messageId, content, emotion));
     }
 
     private void broadcast(CompanionEventMessage message) {

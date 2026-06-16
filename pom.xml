@@ -53,6 +53,7 @@
         <java.version>17</java.version>
         <mybatis-plus.version>3.5.15</mybatis-plus.version>
         <jjwt.version>0.12.6</jjwt.version>
+        <minio.version>8.5.17</minio.version>
         <spring-ai.version>2.0.0-RC1</spring-ai.version>
     </properties>
 
@@ -121,6 +122,11 @@
                 <groupId>io.jsonwebtoken</groupId>
                 <artifactId>jjwt-jackson</artifactId>
                 <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.minio</groupId>
+                <artifactId>minio</artifactId>
+                <version>${minio.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

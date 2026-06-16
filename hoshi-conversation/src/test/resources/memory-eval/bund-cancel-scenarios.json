@@ -1,0 +1,42 @@
+[
+  {
+    "name": "bund-plan-supersede",
+    "description": "用户先计划去外滩，后取消；应 supersede 旧 plan",
+    "existingMemories": [
+      {
+        "id": 11,
+        "memoryType": "short",
+        "category": "plan",
+        "content": "周六晚上去外滩看夜景",
+        "status": "active"
+      }
+    ],
+    "candidate": {
+      "action": "supersede",
+      "memoryType": "short",
+      "category": "plan",
+      "content": "外滩计划已取消",
+      "supersedesContent": "周六晚上去外滩看夜景",
+      "supersedesMemoryId": 11,
+      "confidence": 0.92,
+      "importance": 0.7
+    },
+    "expectedTargetId": 11,
+    "expectedAction": "supersede"
+  },
+  {
+    "name": "bund-plan-archive-by-hint",
+    "description": "压缩 staleItems 归档旧 plan",
+    "existingMemories": [
+      {
+        "id": 21,
+        "memoryType": "short",
+        "category": "plan",
+        "content": "周末去外滩散步",
+        "status": "active"
+      }
+    ],
+    "staleHint": "周末去外滩散步",
+    "expectedArchivedId": 21
+  }
+]

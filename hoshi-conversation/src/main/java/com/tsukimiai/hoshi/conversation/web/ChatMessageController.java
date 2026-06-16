@@ -20,6 +20,7 @@ import com.tsukimiai.hoshi.common.api.ApiResponse;
 import com.tsukimiai.hoshi.common.exception.BusinessException;
 import com.tsukimiai.hoshi.common.exception.ErrorCode;
 import com.tsukimiai.hoshi.common.message.XingnaiMessages;
+import com.tsukimiai.hoshi.conversation.dto.ChatStreamPlaybackSettings;
 import com.tsukimiai.hoshi.conversation.dto.ChatMessageResponse;
 import com.tsukimiai.hoshi.conversation.dto.SendChatMessageRequest;
 import com.tsukimiai.hoshi.conversation.service.ChatMessageService;
@@ -62,23 +63,27 @@ public class ChatMessageController {
             HttpServletResponse response) throws IOException {
         User user = currentUserResolver.requireCurrentUser();
         writeSseResponse(response, sink -> chatMessageService.sendStream(
-                user, sessionId, request.content(), request.webSearchEnabled(), sink));
+                user, sessionId, request.content(), request.webSearchEnabled(), request.playbackSettings(), sink));
     }
 
     @PostMapping(path = "/retry", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public void retryMessage(
             @PathVariable Long sessionId,
+            @RequestBody(required = false) ChatStreamPlaybackSettings playback,
             HttpServletResponse response) throws IOException {
         User user = currentUserResolver.requireCurrentUser();
-        writeSseResponse(response, sink -> chatMessageService.retryStream(user, sessionId, sink));
+        writeSseResponse(response, sink -> chatMessageService.retryStream(
+                user, sessionId, playback == null ? ChatStreamPlaybackSettings.empty() : playback, sink));
     }
 
     @PostMapping(path = "/regenerate", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public void regenerateMessage(
             @PathVariable Long sessionId,
+            @RequestBody(required = false) ChatStreamPlaybackSettings playback,
             HttpServletResponse response) throws IOException {
         User user = currentUserResolver.requireCurrentUser();
-        writeSseResponse(response, sink -> chatMessageService.regenerateStream(user, sessionId, sink));
+        writeSseResponse(response, sink -> chatMessageService.regenerateStream(
+                user, sessionId, playback == null ? ChatStreamPlaybackSettings.empty() : playback, sink));
     }
 
     @DeleteMapping("/{messageId}")

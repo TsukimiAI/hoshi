@@ -69,6 +69,18 @@ public class RefreshTokenServiceImpl implements RefreshTokenService {
         refreshTokenMapper.updateById(token);
     }
 
+    @Override
+    @Transactional
+    public void revokeAllForUser(Long userId) {
+        LocalDateTime now = LocalDateTime.now();
+        refreshTokenMapper.update(
+                null,
+                Wrappers.<RefreshToken>lambdaUpdate()
+                        .eq(RefreshToken::getUserId, userId)
+                        .isNull(RefreshToken::getRevokedAt)
+                        .set(RefreshToken::getRevokedAt, now));
+    }
+
     private RefreshToken findActiveToken(String rawToken) {
         LocalDateTime now = LocalDateTime.now();
         return refreshTokenMapper.selectOne(Wrappers.<RefreshToken>lambdaQuery()

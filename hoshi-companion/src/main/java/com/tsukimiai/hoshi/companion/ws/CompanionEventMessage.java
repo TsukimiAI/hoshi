@@ -3,8 +3,8 @@ package com.tsukimiai.hoshi.companion.ws;
 import java.time.LocalDateTime;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.tsukimiai.hoshi.companion.model.CompanionEventSource;
-import com.tsukimiai.hoshi.companion.model.CompanionState;
+import com.tsukimiai.hoshi.common.companion.CompanionEventSource;
+import com.tsukimiai.hoshi.common.companion.CompanionState;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record CompanionEventMessage(
@@ -14,7 +14,9 @@ public record CompanionEventMessage(
         String source,
         String messageId,
         Integer segmentSeq,
-        String timestamp) {
+        String timestamp,
+        String sessionId,
+        String emotion) {
 
     public static CompanionEventMessage ready(CompanionState state) {
         return new CompanionEventMessage(
@@ -24,7 +26,9 @@ public record CompanionEventMessage(
                 state.source().getValue(),
                 state.messageId() == null ? null : String.valueOf(state.messageId()),
                 state.segmentSeq(),
-                state.updatedAt().toString());
+                state.updatedAt().toString(),
+                null,
+                null);
     }
 
     public static CompanionEventMessage emotion(CompanionState state) {
@@ -35,7 +39,9 @@ public record CompanionEventMessage(
                 state.source().getValue(),
                 state.messageId() == null ? null : String.valueOf(state.messageId()),
                 state.segmentSeq(),
-                state.updatedAt().toString());
+                state.updatedAt().toString(),
+                null,
+                null);
     }
 
     public static CompanionEventMessage emotion(
@@ -52,6 +58,26 @@ public record CompanionEventMessage(
                 source.getValue(),
                 messageId == null ? null : String.valueOf(messageId),
                 segmentSeq,
-                timestamp == null ? null : timestamp.toString());
+                timestamp == null ? null : timestamp.toString(),
+                null,
+                null);
+    }
+
+    public static CompanionEventMessage proactiveMessage(
+            String character,
+            Long sessionId,
+            Long messageId,
+            String content,
+            String emotion) {
+        return new CompanionEventMessage(
+                "proactive_message",
+                character,
+                content,
+                CompanionEventSource.SYSTEM.getValue(),
+                messageId == null ? null : String.valueOf(messageId),
+                null,
+                LocalDateTime.now().toString(),
+                sessionId == null ? null : String.valueOf(sessionId),
+                emotion);
     }
 }

@@ -1,0 +1,26 @@
+CREATE TABLE IF NOT EXISTS user_memory (
+    id                  BIGINT       NOT NULL AUTO_INCREMENT,
+    user_id             BIGINT       NOT NULL,
+    memory_type         VARCHAR(16)  NOT NULL,
+    category            VARCHAR(64)  NOT NULL,
+    content             TEXT         NOT NULL,
+    temporal_scope      VARCHAR(16)  NULL,
+    confidence          DECIMAL(5,4) NOT NULL DEFAULT 0.8000,
+    importance_score    DECIMAL(5,4) NOT NULL DEFAULT 0.5000,
+    strength_score      DECIMAL(5,4) NOT NULL DEFAULT 0.7000,
+    half_life_hours     INT          NULL,
+    access_count        INT          NOT NULL DEFAULT 0,
+    always_pinned       TINYINT      NOT NULL DEFAULT 0,
+    status              VARCHAR(16)  NOT NULL DEFAULT 'active',
+    vector_point_id     VARCHAR(128) NULL,
+    source_session_id   BIGINT       NULL,
+    source_message_id   BIGINT       NULL,
+    last_reinforced_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_user_memory_user_type_status (user_id, memory_type, status),
+    KEY idx_user_memory_reinforced (user_id, last_reinforced_at),
+    CONSTRAINT fk_user_memory_user
+        FOREIGN KEY (user_id) REFERENCES hoshi_user(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

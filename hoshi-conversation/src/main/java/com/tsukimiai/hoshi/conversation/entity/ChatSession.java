@@ -16,6 +16,20 @@ public class ChatSession {
 
     private String title;
 
+    private String summary;
+
+    private String summaryFacts;
+
+    private String summaryDecisions;
+
+    private String summaryOpenLoops;
+
+    private Integer summaryVersion;
+
+    private Long compressedUntilMessageId;
+
+    private LocalDateTime summaryUpdatedAt;
+
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;
@@ -42,6 +56,62 @@ public class ChatSession {
 
     public void setTitle(String title) {
         this.title = title;
+    }
+
+    public String getSummary() {
+        return summary;
+    }
+
+    public void setSummary(String summary) {
+        this.summary = summary;
+    }
+
+    public String getSummaryFacts() {
+        return summaryFacts;
+    }
+
+    public void setSummaryFacts(String summaryFacts) {
+        this.summaryFacts = summaryFacts;
+    }
+
+    public String getSummaryDecisions() {
+        return summaryDecisions;
+    }
+
+    public void setSummaryDecisions(String summaryDecisions) {
+        this.summaryDecisions = summaryDecisions;
+    }
+
+    public String getSummaryOpenLoops() {
+        return summaryOpenLoops;
+    }
+
+    public void setSummaryOpenLoops(String summaryOpenLoops) {
+        this.summaryOpenLoops = summaryOpenLoops;
+    }
+
+    public Integer getSummaryVersion() {
+        return summaryVersion;
+    }
+
+    public void setSummaryVersion(Integer summaryVersion) {
+        this.summaryVersion = summaryVersion;
+    }
+
+    public Long getCompressedUntilMessageId() {
+        return compressedUntilMessageId;
+    }
+
+    public void setCompressedUntilMessageId(Long compressedUntilMessageId) {
+        this.compressedUntilMessageId = compressedUntilMessageId;
+    }
+
+    public LocalDateTime getSummaryUpdatedAt() {
+        return summaryUpdatedAt;
+    }
+
+    public void setSummaryUpdatedAt(LocalDateTime summaryUpdatedAt) {
+        this.summaryUpdatedAt = summaryUpdatedAt;
     }
 
     public LocalDateTime getCreatedAt() {

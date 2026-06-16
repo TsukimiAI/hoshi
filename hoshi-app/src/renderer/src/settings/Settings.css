@@ -1,0 +1,295 @@
+.settings-shell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--hoshi-bg);
+}
+
+.settings-shell__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  padding: 1rem 0.85rem;
+  border-right: 1px solid var(--hoshi-border);
+  background: var(--hoshi-bg-secondary);
+}
+
+.settings-shell__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+  padding: 0.35rem 0.5rem;
+  border: none;
+  border-radius: var(--hoshi-radius-sm);
+  background: transparent;
+  color: var(--hoshi-text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.settings-shell__back:hover {
+  background: var(--hoshi-surface-hover);
+  color: var(--hoshi-text);
+}
+
+.settings-shell__title {
+  margin: 0 0 0.5rem 0.35rem;
+  color: var(--hoshi-text-subtle);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-shell__nav-btn {
+  display: block;
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: none;
+  border-radius: var(--hoshi-radius-sm);
+  background: transparent;
+  color: var(--hoshi-text-muted);
+  font-size: 0.86rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-shell__nav-btn.is-active,
+.settings-shell__nav-btn:hover {
+  background: var(--hoshi-surface-hover);
+  color: var(--hoshi-text);
+}
+
+.settings-shell__content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  background: var(--hoshi-bg);
+}
+
+.settings-card {
+  flex: 1;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  padding: 1.75rem 2.25rem;
+  border: none;
+  border-radius: 0;
+  background: var(--hoshi-bg);
+  box-shadow: none;
+}
+
+.settings-form {
+  max-width: 28rem;
+}
+
+.settings-form--wide {
+  max-width: 36rem;
+}
+
+.settings-card + .settings-card {
+  margin-top: 0;
+  border-top: 1px solid var(--hoshi-border);
+}
+
+.settings-card h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.settings-card__hint {
+  margin: 0 0 1.1rem;
+  color: var(--hoshi-text-subtle);
+  font-size: 0.82rem;
+}
+
+.settings-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.9rem;
+}
+
+.settings-field label {
+  color: var(--hoshi-text-muted);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.settings-field input[type='text'],
+.settings-field input[type='email'],
+.settings-field input[type='password'],
+.settings-field input[type='number'],
+.settings-field select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--hoshi-border);
+  border-radius: var(--hoshi-radius-sm);
+  background: var(--hoshi-bg);
+  color: var(--hoshi-text);
+  font-size: 0.88rem;
+}
+
+.settings-field input:read-only {
+  color: var(--hoshi-text-muted);
+  background: var(--hoshi-bg-secondary);
+}
+
+.settings-field input[type='range'] {
+  width: 100%;
+}
+
+.settings-field__value {
+  color: var(--hoshi-text-subtle);
+  font-size: 0.78rem;
+}
+
+.settings-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.settings-avatar-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings-avatar-row .user-avatar--md {
+  width: 4rem;
+  height: 4rem;
+  font-size: 1.4rem;
+}
+
+.user-avatar--md {
+  width: 2.25rem;
+  height: 2.25rem;
+  font-size: 0.95rem;
+}
+
+.user-avatar--image,
+.user-avatar__photo {
+  object-fit: cover;
+}
+
+.user-avatar-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.user-avatar-btn:hover .user-avatar {
+  box-shadow: 0 0 0 2px var(--hoshi-primary);
+}
+
+.settings-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hoshi-primary) 12%, var(--hoshi-bg));
+  color: var(--hoshi-text);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0 0.85rem;
+  border: 1px solid var(--hoshi-border-strong);
+  border-radius: var(--hoshi-radius-sm);
+  background: var(--hoshi-bg);
+  color: var(--hoshi-text);
+  font-size: 0.84rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-btn:hover {
+  background: var(--hoshi-surface-hover);
+}
+
+.settings-btn--primary {
+  border-color: var(--hoshi-primary);
+  background: var(--hoshi-primary);
+  color: var(--hoshi-primary-text);
+}
+
+.settings-btn--primary:hover {
+  filter: brightness(0.96);
+}
+
+.settings-btn--danger {
+  border-color: color-mix(in srgb, #d05050 35%, var(--hoshi-border));
+  color: #c94848;
+}
+
+.settings-message {
+  margin: 0.75rem 0 0;
+  font-size: 0.82rem;
+}
+
+.settings-message.is-error {
+  color: #c94848;
+}
+
+.settings-message.is-info {
+  color: var(--hoshi-text-muted);
+}
+
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-top: 1px solid var(--hoshi-border);
+}
+
+.settings-toggle-row:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.settings-toggle-row strong {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.settings-toggle-row small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--hoshi-text-subtle);
+  font-size: 0.76rem;
+}
+
+.settings-toggle-row input[type='checkbox'] {
+  flex-shrink: 0;
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--hoshi-primary);
+}

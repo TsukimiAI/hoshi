@@ -13,7 +13,9 @@ public record AuthResponse(
             String username,
             String email,
             String avatarUrl,
-            boolean emailVerified) {
+            boolean emailVerified,
+            String createdAt,
+            String lastLoginAt) {
 
     }
 

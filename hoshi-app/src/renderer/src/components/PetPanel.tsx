@@ -1,21 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
-import { useChatMessages } from '../chat/ChatMessagesContext'
 import { useChatSessions } from '../chat/ChatSessionContext'
-import { resolveEmotionFromChatState } from '../pet/petEmotion'
-import { getPetSprite, resolvePetEmotion } from '../pet/petSprites'
-
-function resolveWsUrl(): string {
-  const base = window.hoshi.apiBaseUrl
-  if (!base) {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${protocol}//${window.location.host}/ws/pet`
-  }
-  const url = new URL(base)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  url.pathname = '/ws/pet'
-  return url.toString()
-}
+import { PetStage } from './PetStage'
 
 function formatSessionTime(value: string): string {
   const updatedAt = new Date(value)
@@ -44,36 +30,8 @@ function formatSessionTime(value: string): string {
 export function PetPanel(): React.JSX.Element {
   const { user, requireAuth } = useAuth()
   const { sessions, loading, error, activeSessionId, selectSession, createSession, deleteSession } = useChatSessions()
-  const { messages, sending } = useChatMessages()
-  const [emotion, setEmotion] = useState(() => resolveEmotionFromChatState([], false))
   const [sessionsOpen, setSessionsOpen] = useState(false)
   const petPanelRef = useRef<HTMLElement>(null)
-  const sendingRef = useRef(sending)
-  sendingRef.current = sending
-
-  useEffect(() => {
-    const socket = new WebSocket(resolveWsUrl())
-    socket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data as string) as { type?: string; value?: string }
-        if (payload.type !== 'emotion' || !payload.value) {
-          return
-        }
-        if (!sendingRef.current) {
-          setEmotion(resolvePetEmotion('normal'))
-          return
-        }
-        setEmotion(resolvePetEmotion(payload.value))
-      } catch {
-        // Ignore malformed websocket payloads.
-      }
-    }
-    return () => socket.close()
-  }, [])
-
-  useEffect(() => {
-    setEmotion(resolveEmotionFromChatState(messages, sending))
-  }, [messages, sending])
 
   useEffect(() => {
     if (!sessionsOpen) {
@@ -158,14 +116,7 @@ export function PetPanel(): React.JSX.Element {
       </div>
 
       <div className="pet-panel__body">
-        <div className="pet-panel__stage">
-          <img
-            className="pet-sprite"
-            src={getPetSprite(emotion)}
-            alt="星奈"
-            draggable={false}
-          />
-        </div>
+        <PetStage variant="panel" memoryToastVisible={!sessionsOpen} className="pet-panel__stage" />
 
         <aside
           className={`pet-panel__sessions ${sessionsOpen ? 'open' : ''}`}
