@@ -11,6 +11,9 @@ import org.springframework.util.StringUtils;
 
 final class AiStreamSupport {
 
+    record CollectedStream(String text, ChatResponse lastResponse) {
+    }
+
     String rootCauseMessage(Throwable ex) {
         Throwable current = ex;
         while (current.getCause() != null && current.getCause() != current) {
@@ -19,13 +22,17 @@ final class AiStreamSupport {
         return current.getMessage() != null ? current.getMessage() : ex.toString();
     }
 
-    String collectText(ChatModel model, Prompt prompt, Duration timeout) {
+    CollectedStream collect(ChatModel model, Prompt prompt, Duration timeout) {
         AtomicReference<String> accumulated = new AtomicReference<>("");
+        AtomicReference<ChatResponse> last = new AtomicReference<>();
         model.stream(prompt)
                 .timeout(timeout)
-                .doOnNext(chunk -> toDelta(chunk, accumulated))
+                .doOnNext(chunk -> {
+                    last.set(chunk);
+                    toDelta(chunk, accumulated);
+                })
                 .blockLast();
-        return accumulated.get();
+        return new CollectedStream(accumulated.get(), last.get());
     }
 
     String toDelta(ChatResponse chunk, AtomicReference<String> accumulated) {

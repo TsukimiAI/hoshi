@@ -80,8 +80,10 @@ public class ProactiveConversationWorkflow {
     }
 
     public void scanAllUsers() {
+        long startTime = System.nanoTime();
         if (!policyGate.isEnabled()) {
             metrics.recordSkipped("disabled");
+            metrics.recordScanDuration("skipped", System.nanoTime() - startTime);
             return;
         }
 
@@ -91,9 +93,11 @@ public class ProactiveConversationWorkflow {
             try {
                 tryTriggerForUser(userId);
             } catch (Exception ex) {
+                metrics.recordUserError("unexpected");
                 log.warn("Proactive conversation failed for user {}: {}", userId, ex.getMessage(), ex);
             }
         }
+        metrics.recordScanDuration("success", System.nanoTime() - startTime);
     }
 
     @Transactional

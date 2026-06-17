@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,9 @@ import com.tsukimiai.hoshi.conversation.support.StreamClientClosedException;
 import com.tsukimiai.hoshi.conversation.stream.ChatStreamSink;
 import com.tsukimiai.hoshi.user.entity.User;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
 @Service
 public class ChatMessageServiceImpl implements ChatMessageService {
 
@@ -38,6 +42,7 @@ public class ChatMessageServiceImpl implements ChatMessageService {
     private final ChatSessionService chatSessionService;
     private final ProactiveReplyTracker proactiveReplyTracker;
     private final TransactionTemplate transactionTemplate;
+    private final MeterRegistry meterRegistry;
 
     public ChatMessageServiceImpl(
             ChatMessagePersistenceService persistenceService,
@@ -45,13 +50,15 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             ChatStreamErrorHandler streamErrorHandler,
             ChatSessionService chatSessionService,
             ProactiveReplyTracker proactiveReplyTracker,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.persistenceService = persistenceService;
         this.streamOrchestrator = streamOrchestrator;
         this.streamErrorHandler = streamErrorHandler;
         this.chatSessionService = chatSessionService;
         this.proactiveReplyTracker = proactiveReplyTracker;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.meterRegistry = meterRegistryProvider.getIfAvailable();
     }
 
     @Override
@@ -71,6 +78,8 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             boolean webSearch,
             ChatStreamPlaybackSettings playback,
             ChatStreamSink sink) {
+        long startTime = System.nanoTime();
+        recordChatRequestStarted("send", webSearch);
         try {
             ChatMessage userMessage = transactionTemplate.execute(status -> {
                 ChatSession session = chatSessionService.get(user, sessionId);
@@ -82,32 +91,44 @@ public class ChatMessageServiceImpl implements ChatMessageService {
 
             proactiveReplyTracker.markResponded(sessionId);
             sink.emit("user", ChatMessageResponse.from(userMessage));
-            streamOrchestrator.streamAssistantReply(user, sessionId, sink, true, webSearch, playback);
+            streamOrchestrator.streamAssistantReply(user, sessionId, sink, "send", true, webSearch, playback);
+            recordChatRequestFinished("send", webSearch, "success", startTime);
         } catch (StreamClientClosedException ex) {
+            recordChatRequestFinished("send", webSearch, "client_closed", startTime);
             log.debug("Chat stream closed by client for session {}", sessionId);
         } catch (Exception ex) {
+            recordChatRequestFinished("send", webSearch, "error", startTime);
+            recordChatError("send", ex);
             streamErrorHandler.handleStreamFailure(sessionId, sink, ex, "chat stream");
         }
     }
 
     @Override
     public void retryStream(User user, Long sessionId, ChatStreamPlaybackSettings playback, ChatStreamSink sink) {
+        long startTime = System.nanoTime();
+        recordChatRequestStarted("retry", false);
         try {
             chatSessionService.get(user, sessionId);
             List<ChatMessage> messages = persistenceService.listRecentMessages(sessionId, Integer.MAX_VALUE);
             if (messages.isEmpty() || !ChatMessageRole.USER.getValue().equals(messages.get(messages.size() - 1).getRole())) {
                 throw new BusinessException(ErrorCode.BAD_REQUEST, XingnaiMessages.retryUnavailable());
             }
-            streamOrchestrator.streamAssistantReply(user, sessionId, sink, false, false, playback);
+            streamOrchestrator.streamAssistantReply(user, sessionId, sink, "retry", false, false, playback);
+            recordChatRequestFinished("retry", false, "success", startTime);
         } catch (StreamClientClosedException ex) {
+            recordChatRequestFinished("retry", false, "client_closed", startTime);
             log.debug("Chat retry stream closed by client for session {}", sessionId);
         } catch (Exception ex) {
+            recordChatRequestFinished("retry", false, "error", startTime);
+            recordChatError("retry", ex);
             streamErrorHandler.handleStreamFailure(sessionId, sink, ex, "chat retry");
         }
     }
 
     @Override
     public void regenerateStream(User user, Long sessionId, ChatStreamPlaybackSettings playback, ChatStreamSink sink) {
+        long startTime = System.nanoTime();
+        recordChatRequestStarted("regenerate", false);
         try {
             chatSessionService.get(user, sessionId);
             List<ChatMessage> messages = persistenceService.listRecentMessages(sessionId, Integer.MAX_VALUE);
@@ -122,10 +143,14 @@ public class ChatMessageServiceImpl implements ChatMessageService {
                 persistenceService.clearSessionSummary(session);
                 persistenceService.touchSession(session);
             });
-            streamOrchestrator.streamAssistantReply(user, sessionId, sink, false, false, playback);
+            streamOrchestrator.streamAssistantReply(user, sessionId, sink, "regenerate", false, false, playback);
+            recordChatRequestFinished("regenerate", false, "success", startTime);
         } catch (StreamClientClosedException ex) {
+            recordChatRequestFinished("regenerate", false, "client_closed", startTime);
             log.debug("Chat regenerate stream closed by client for session {}", sessionId);
         } catch (Exception ex) {
+            recordChatRequestFinished("regenerate", false, "error", startTime);
+            recordChatError("regenerate", ex);
             streamErrorHandler.handleStreamFailure(sessionId, sink, ex, "chat regenerate");
         }
     }
@@ -141,5 +166,44 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         ChatSession session = chatSessionService.get(user, sessionId);
         persistenceService.clearSessionSummary(session);
         persistenceService.touchSession(session);
+    }
+
+    private void recordChatRequestStarted(String operation, boolean webSearch) {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter(
+                "hoshi.chat.stream.requests.total",
+                "operation", operation,
+                "web_search", Boolean.toString(webSearch))
+                .increment();
+    }
+
+    private void recordChatRequestFinished(String operation, boolean webSearch, String outcome, long startTime) {
+        if (meterRegistry == null) {
+            return;
+        }
+        Timer.builder("hoshi.chat.stream.duration")
+                .description("End-to-end latency of chat stream requests")
+                .tag("operation", operation)
+                .tag("web_search", Boolean.toString(webSearch))
+                .tag("outcome", outcome)
+                .register(meterRegistry)
+                .record(java.time.Duration.ofNanos(System.nanoTime() - startTime));
+    }
+
+    private void recordChatError(String operation, Exception ex) {
+        if (meterRegistry == null) {
+            return;
+        }
+        BusinessException businessException = streamErrorHandler.resolveBusinessException(ex);
+        String errorCode = Integer.toString(businessException == null
+                ? ErrorCode.INTERNAL_ERROR.getCode()
+                : businessException.getErrorCode().getCode());
+        meterRegistry.counter(
+                "hoshi.chat.stream.errors.total",
+                "operation", operation,
+                "error_code", errorCode)
+                .increment();
     }
 }

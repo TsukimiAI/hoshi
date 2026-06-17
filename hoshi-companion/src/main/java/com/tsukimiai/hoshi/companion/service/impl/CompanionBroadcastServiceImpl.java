@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.tsukimiai.hoshi.common.companion.CompanionEmotion;
 import com.tsukimiai.hoshi.common.companion.CompanionEventSource;
 import com.tsukimiai.hoshi.common.companion.CompanionState;
+import com.tsukimiai.hoshi.companion.metrics.CompanionWebSocketMetrics;
 import com.tsukimiai.hoshi.companion.service.CompanionBroadcastService;
 import com.tsukimiai.hoshi.companion.ws.CompanionEventMessage;
 
@@ -31,16 +32,24 @@ public class CompanionBroadcastServiceImpl implements CompanionBroadcastService 
     private final ObjectMapper objectMapper = JsonMapper.builder().build();
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
     private final AtomicReference<CompanionState> currentState = new AtomicReference<>(CompanionState.idle());
+    private final CompanionWebSocketMetrics metrics;
+
+    public CompanionBroadcastServiceImpl(CompanionWebSocketMetrics metrics) {
+        this.metrics = metrics;
+    }
 
     @Override
     public void register(WebSocketSession session) {
         sessions.add(session);
+        metrics.recordActiveConnections(sessions.size());
+        metrics.recordEventPublished("ready", currentState.get().source().getValue());
         send(session, CompanionEventMessage.ready(currentState.get()));
     }
 
     @Override
     public void unregister(WebSocketSession session) {
         sessions.remove(session);
+        metrics.recordActiveConnections(sessions.size());
     }
 
     @Override
@@ -63,6 +72,7 @@ public class CompanionBroadcastServiceImpl implements CompanionBroadcastService 
                 segmentSeq,
                 LocalDateTime.now());
         currentState.set(nextState);
+        metrics.recordEventPublished("emotion", source == null ? "unknown" : source.getValue());
         broadcast(CompanionEventMessage.emotion(nextState));
     }
 
@@ -73,6 +83,7 @@ public class CompanionBroadcastServiceImpl implements CompanionBroadcastService 
             Long messageId,
             String content,
             String emotion) {
+        metrics.recordEventPublished("proactive_message", CompanionEventSource.SYSTEM.getValue());
         broadcast(CompanionEventMessage.proactiveMessage(character, sessionId, messageId, content, emotion));
     }
 
@@ -85,13 +96,21 @@ public class CompanionBroadcastServiceImpl implements CompanionBroadcastService 
     private void send(WebSocketSession session, CompanionEventMessage message) {
         if (!session.isOpen()) {
             sessions.remove(session);
+            metrics.recordActiveConnections(sessions.size());
+            metrics.recordMessageSendError("closed");
             return;
         }
         try {
             session.sendMessage(new TextMessage(serialize(message)));
+            metrics.recordMessageSent(message.type());
+        } catch (JsonProcessingException ex) {
+            log.warn("Failed to serialize companion websocket message", ex);
+            metrics.recordMessageSendError("serialize_error");
         } catch (IOException ex) {
             log.debug("Failed to send companion websocket message", ex);
             sessions.remove(session);
+            metrics.recordActiveConnections(sessions.size());
+            metrics.recordMessageSendError("io_error");
             try {
                 session.close();
             } catch (IOException ignored) {

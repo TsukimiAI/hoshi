@@ -45,6 +45,7 @@
         <module>hoshi-user</module>
         <module>hoshi-conversation</module>
         <module>hoshi-ai</module>
+        <module>hoshi-metrics</module>
         <module>hoshi-companion</module>
         <module>hoshi-server</module>
     </modules>
@@ -101,6 +102,11 @@
             <dependency>
                 <groupId>com.tsukimiai</groupId>
                 <artifactId>hoshi-ai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tsukimiai</groupId>
+                <artifactId>hoshi-metrics</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

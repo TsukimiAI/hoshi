@@ -44,6 +44,7 @@ public class MemoryReconciliationWorkflow {
     private final SessionSummaryCodec sessionSummaryCodec;
     private final XingnaiChatService xingnaiChatService;
     private final HoshiAiProperties hoshiAiProperties;
+    private final MemoryReconciliationMetrics metrics;
 
     public MemoryReconciliationWorkflow(
             MemoryReconciliationProperties properties,
@@ -53,7 +54,8 @@ public class MemoryReconciliationWorkflow {
             ChatContextAssembler chatContextAssembler,
             SessionSummaryCodec sessionSummaryCodec,
             XingnaiChatService xingnaiChatService,
-            HoshiAiProperties hoshiAiProperties) {
+            HoshiAiProperties hoshiAiProperties,
+            MemoryReconciliationMetrics metrics) {
         this.properties = properties;
         this.memoryReconciliationService = memoryReconciliationService;
         this.chatSessionMapper = chatSessionMapper;
@@ -62,20 +64,27 @@ public class MemoryReconciliationWorkflow {
         this.sessionSummaryCodec = sessionSummaryCodec;
         this.xingnaiChatService = xingnaiChatService;
         this.hoshiAiProperties = hoshiAiProperties;
+        this.metrics = metrics;
     }
 
     public void scanAllUsers() {
+        long startTime = System.nanoTime();
         if (!properties.isEnabled()) {
+            metrics.recordSkipped("disabled");
+            metrics.recordScanDuration("skipped", System.nanoTime() - startTime);
             return;
         }
         List<Long> userIds = listCandidateUserIds(properties.getMaxUsersPerScan());
+        metrics.recordScan(userIds.size());
         for (Long userId : userIds) {
             try {
                 reconcileUser(userId);
             } catch (Exception ex) {
+                metrics.recordUserError("unexpected");
                 log.warn("Memory reconciliation failed for user {}: {}", userId, ex.getMessage(), ex);
             }
         }
+        metrics.recordScanDuration("success", System.nanoTime() - startTime);
     }
 
     public int reconcileUser(Long userId) {
@@ -83,10 +92,12 @@ public class MemoryReconciliationWorkflow {
                 .filter(memory -> "short".equalsIgnoreCase(memory.getMemoryType()))
                 .toList();
         if (activeShort.isEmpty()) {
+            metrics.recordSkipped("no_active_memories");
             return 0;
         }
         List<ChatSession> sessions = listRecentSessions(userId, properties.getMaxSessionsPerScan());
         if (sessions.isEmpty()) {
+            metrics.recordSkipped("no_sessions");
             return 0;
         }
 
@@ -140,15 +151,21 @@ public class MemoryReconciliationWorkflow {
                 new AiCognitionInput(mergedTurns, primarySummary, metadata));
         AiCognitionResult result = xingnaiChatService.runCognitionTask(task);
         if (!(result.result() instanceof MemoryReconciliationResult payload)) {
+            metrics.recordSkipped("ai_parse_failed");
             return 0;
         }
-        return memoryReconciliationService.applyReconciliationOperations(
+        int applied = memoryReconciliationService.applyReconciliationOperations(
                 userId,
                 primarySession.getId(),
                 null,
                 payload.operations(),
                 hoshiAiProperties.getMemoryReconciliationMinConfidence(),
                 recentArchivedHints);
+        if (applied > 0) {
+            metrics.recordCompleted();
+            metrics.recordOperationsApplied(applied);
+        }
+        return applied;
     }
 
     private List<Long> listCandidateUserIds(int limit) {

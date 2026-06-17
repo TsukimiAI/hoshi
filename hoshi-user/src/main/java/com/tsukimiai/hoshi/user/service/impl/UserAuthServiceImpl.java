@@ -2,12 +2,14 @@ package com.tsukimiai.hoshi.user.service.impl;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.Duration;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.ObjectProvider;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.tsukimiai.hoshi.common.exception.BusinessException;
@@ -43,6 +45,9 @@ import com.tsukimiai.hoshi.user.service.RefreshTokenService;
 import com.tsukimiai.hoshi.user.service.UserAuthService;
 import com.tsukimiai.hoshi.user.service.UserTokenService;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
 @Service
 public class UserAuthServiceImpl implements UserAuthService {
 
@@ -61,6 +66,7 @@ public class UserAuthServiceImpl implements UserAuthService {
     private final EmailCodeService emailCodeService;
     private final RefreshTokenService refreshTokenService;
     private final AuthRateLimitService authRateLimitService;
+    private final MeterRegistry meterRegistry;
 
     public UserAuthServiceImpl(
             UserMapper userMapper,
@@ -73,7 +79,8 @@ public class UserAuthServiceImpl implements UserAuthService {
             EmailService emailService,
             EmailCodeService emailCodeService,
             RefreshTokenService refreshTokenService,
-            AuthRateLimitService authRateLimitService) {
+            AuthRateLimitService authRateLimitService,
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
@@ -85,185 +92,286 @@ public class UserAuthServiceImpl implements UserAuthService {
         this.emailCodeService = emailCodeService;
         this.refreshTokenService = refreshTokenService;
         this.authRateLimitService = authRateLimitService;
+        this.meterRegistry = meterRegistryProvider.getIfAvailable();
     }
 
     @Override
     public MessageResponse sendRegisterCode(SendRegisterCodeRequest request) {
-        authRateLimitService.checkSendCodeAllowed(request.email());
-        emailCodeService.sendRegisterCode(request.email());
-        return new MessageResponse("验证码已发送，请查收邮件");
+        return recordAuth("send_register_code", () -> {
+            authRateLimitService.checkSendCodeAllowed(request.email());
+            emailCodeService.sendRegisterCode(request.email());
+            return new MessageResponse("验证码已发送，请查收邮件");
+        });
     }
 
     @Override
     public MessageResponse sendPasswordResetCode(SendRegisterCodeRequest request) {
-        authRateLimitService.checkSendCodeAllowed(request.email());
-        emailCodeService.sendPasswordResetCode(request.email());
-        return new MessageResponse(RESET_CODE_SENT_MESSAGE);
+        return recordAuth("send_reset_code", () -> {
+            authRateLimitService.checkSendCodeAllowed(request.email());
+            emailCodeService.sendPasswordResetCode(request.email());
+            return new MessageResponse(RESET_CODE_SENT_MESSAGE);
+        });
     }
 
     @Override
     @Transactional
     public RegisterResponse register(RegisterRequest request) {
-        boolean exists = userMapper.exists(Wrappers.<User>lambdaQuery()
-                .eq(User::getUsername, request.username())
-                .or()
-                .eq(User::getEmail, request.email()));
-        if (exists) {
-            throw new BusinessException(ErrorCode.USER_ALREADY_EXISTS);
-        }
+        return recordAuth("register", () -> {
+            boolean exists = userMapper.exists(Wrappers.<User>lambdaQuery()
+                    .eq(User::getUsername, request.username())
+                    .or()
+                    .eq(User::getEmail, request.email()));
+            if (exists) {
+                throw new BusinessException(ErrorCode.USER_ALREADY_EXISTS);
+            }
 
-        emailCodeService.verifyAndConsume(request.email(), request.emailCode(), EmailCodePurpose.REGISTER);
+            emailCodeService.verifyAndConsume(request.email(), request.emailCode(), EmailCodePurpose.REGISTER);
 
-        LocalDateTime now = LocalDateTime.now();
-        User user = new User();
-        user.setUsername(request.username());
-        user.setEmail(request.email().trim().toLowerCase());
-        user.setPasswordHash(passwordEncoder.encode(request.password()));
-        user.setStatus(1);
-        user.setEmailVerified(1);
-        user.setEmailVerifiedAt(now);
-        user.setCreatedAt(now);
-        user.setUpdatedAt(now);
-        userMapper.insert(user);
+            LocalDateTime now = LocalDateTime.now();
+            User user = new User();
+            user.setUsername(request.username());
+            user.setEmail(request.email().trim().toLowerCase());
+            user.setPasswordHash(passwordEncoder.encode(request.password()));
+            user.setStatus(1);
+            user.setEmailVerified(1);
+            user.setEmailVerifiedAt(now);
+            user.setCreatedAt(now);
+            user.setUpdatedAt(now);
+            userMapper.insert(user);
 
-        return new RegisterResponse(
-                user.getId(),
-                user.getEmail(),
-                "注册成功，现在可以登录了");
+            return new RegisterResponse(
+                    user.getId(),
+                    user.getEmail(),
+                    "注册成功，现在可以登录了");
+        });
     }
 
     @Override
     @Transactional
     public MessageResponse verifyEmail(TokenRequest request) {
-        UserToken token = userTokenService.consumeToken(request.token(), UserTokenType.EMAIL_VERIFY);
-        User user = requireUser(token.getUserId());
-        if (user.hasVerifiedEmail()) {
-            throw new BusinessException(ErrorCode.EMAIL_ALREADY_VERIFIED);
-        }
+        return recordAuth("verify_email", () -> {
+            UserToken token = userTokenService.consumeToken(request.token(), UserTokenType.EMAIL_VERIFY);
+            User user = requireUser(token.getUserId());
+            if (user.hasVerifiedEmail()) {
+                throw new BusinessException(ErrorCode.EMAIL_ALREADY_VERIFIED);
+            }
 
-        LocalDateTime now = LocalDateTime.now();
-        user.setEmailVerified(1);
-        user.setEmailVerifiedAt(now);
-        user.setUpdatedAt(now);
-        userMapper.updateById(user);
-        return new MessageResponse("邮箱验证成功，现在可以登录了");
+            LocalDateTime now = LocalDateTime.now();
+            user.setEmailVerified(1);
+            user.setEmailVerifiedAt(now);
+            user.setUpdatedAt(now);
+            userMapper.updateById(user);
+            return new MessageResponse("邮箱验证成功，现在可以登录了");
+        });
     }
 
     @Override
     @Transactional
     public MessageResponse resendVerification(ResendVerificationRequest request) {
-        User user = findByEmail(request.email());
-        if (user == null) {
-            return new MessageResponse("如果该邮箱已注册且未验证，我们已重新发送验证邮件");
-        }
-        if (user.hasVerifiedEmail()) {
-            throw new BusinessException(ErrorCode.EMAIL_ALREADY_VERIFIED);
-        }
+        return recordAuth("resend_verification", () -> {
+            User user = findByEmail(request.email());
+            if (user == null) {
+                return new MessageResponse("如果该邮箱已注册且未验证，我们已重新发送验证邮件");
+            }
+            if (user.hasVerifiedEmail()) {
+                throw new BusinessException(ErrorCode.EMAIL_ALREADY_VERIFIED);
+            }
 
-        String rawToken = userTokenService.issueToken(user.getId(), UserTokenType.EMAIL_VERIFY);
-        emailService.sendVerificationEmail(user, rawToken);
-        return new MessageResponse("验证邮件已重新发送");
+            String rawToken = userTokenService.issueToken(user.getId(), UserTokenType.EMAIL_VERIFY);
+            emailService.sendVerificationEmail(user, rawToken);
+            return new MessageResponse("验证邮件已重新发送");
+        });
     }
 
     @Override
     @Transactional
     public MessageResponse forgotPassword(ForgotPasswordRequest request) {
-        User user = findByEmail(request.email());
-        if (user != null) {
-            String rawToken = userTokenService.issueToken(user.getId(), UserTokenType.PASSWORD_RESET);
-            emailService.sendPasswordResetEmail(user, rawToken);
-        }
-        return new MessageResponse(FORGOT_PASSWORD_MESSAGE);
+        return recordAuth("forgot_password", () -> {
+            User user = findByEmail(request.email());
+            if (user != null) {
+                String rawToken = userTokenService.issueToken(user.getId(), UserTokenType.PASSWORD_RESET);
+                emailService.sendPasswordResetEmail(user, rawToken);
+            }
+            return new MessageResponse(FORGOT_PASSWORD_MESSAGE);
+        });
     }
 
     @Override
     @Transactional
     public MessageResponse resetPassword(ResetPasswordRequest request) {
-        UserToken token = userTokenService.consumeToken(request.token(), UserTokenType.PASSWORD_RESET);
-        User user = requireUser(token.getUserId());
-        updatePassword(user, request.newPassword());
-        return new MessageResponse("密码重置成功，请使用新密码登录");
+        return recordAuth("reset_password", () -> {
+            UserToken token = userTokenService.consumeToken(request.token(), UserTokenType.PASSWORD_RESET);
+            User user = requireUser(token.getUserId());
+            updatePassword(user, request.newPassword());
+            return new MessageResponse("密码重置成功，请使用新密码登录");
+        });
     }
 
     @Override
     @Transactional
     public MessageResponse resetPasswordByCode(ResetPasswordByCodeRequest request) {
-        emailCodeService.verifyAndConsume(request.email(), request.emailCode(), EmailCodePurpose.PASSWORD_RESET);
-        User user = findByEmail(request.email());
-        if (user == null) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
-        updatePassword(user, request.newPassword());
-        return new MessageResponse("密码重置成功，请使用新密码登录");
+        return recordAuth("reset_password_by_code", () -> {
+            emailCodeService.verifyAndConsume(request.email(), request.emailCode(), EmailCodePurpose.PASSWORD_RESET);
+            User user = findByEmail(request.email());
+            if (user == null) {
+                throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+            }
+            updatePassword(user, request.newPassword());
+            return new MessageResponse("密码重置成功，请使用新密码登录");
+        });
     }
 
     @Override
     @Transactional
     public AuthResponse login(LoginRequest request, String clientKey) {
-        authRateLimitService.checkLoginAllowed(clientKey);
+        return recordAuth("login", () -> {
+            authRateLimitService.checkLoginAllowed(clientKey);
 
-        User user = userMapper.selectOne(Wrappers.<User>lambdaQuery()
-                .eq(User::getUsername, request.usernameOrEmail())
-                .or()
-                .eq(User::getEmail, request.usernameOrEmail()));
-        if (user == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
-        }
-        if (!user.hasVerifiedEmail()) {
-            throw new BusinessException(ErrorCode.EMAIL_NOT_VERIFIED);
-        }
+            User user = userMapper.selectOne(Wrappers.<User>lambdaQuery()
+                    .eq(User::getUsername, request.usernameOrEmail())
+                    .or()
+                    .eq(User::getEmail, request.usernameOrEmail()));
+            if (user == null || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
+                throw new BusinessException(ErrorCode.INVALID_CREDENTIALS);
+            }
+            if (!user.hasVerifiedEmail()) {
+                throw new BusinessException(ErrorCode.EMAIL_NOT_VERIFIED);
+            }
 
-        LocalDateTime now = LocalDateTime.now();
-        user.setLastLoginAt(now);
-        user.setUpdatedAt(now);
-        userMapper.updateById(user);
-        return buildAuthResponse(user);
+            LocalDateTime now = LocalDateTime.now();
+            user.setLastLoginAt(now);
+            user.setUpdatedAt(now);
+            userMapper.updateById(user);
+            return buildAuthResponse(user);
+        });
     }
 
     @Override
     @Transactional
     public AuthResponse refresh(RefreshTokenRequest request) {
-        RefreshToken refreshToken = refreshTokenService.consumeToken(request.refreshToken());
-        User user = requireUser(refreshToken.getUserId());
-        return buildAuthResponse(user);
+        return recordAuth("refresh", () -> {
+            RefreshToken refreshToken = refreshTokenService.consumeToken(request.refreshToken());
+            recordRefreshConsumed("success");
+            User user = requireUser(refreshToken.getUserId());
+            return buildAuthResponse(user);
+        }, ex -> {
+            recordRefreshConsumed("failure");
+            throw ex;
+        });
     }
 
     @Override
     public MessageResponse logout(LogoutRequest request, String accessToken) {
-        refreshTokenService.revokeToken(request.refreshToken());
-        if (accessToken != null && !accessToken.isBlank()) {
-            jwtTokenProvider.blacklistAccessToken(accessToken, jwtBlacklistService);
-        }
-        return new MessageResponse("已退出登录");
+        return recordAuth("logout", () -> {
+            refreshTokenService.revokeToken(request.refreshToken());
+            if (accessToken != null && !accessToken.isBlank()) {
+                jwtTokenProvider.blacklistAccessToken(accessToken, jwtBlacklistService);
+                recordLogoutBlacklisted();
+            }
+            return new MessageResponse("已退出登录");
+        });
     }
 
     @Override
     public AuthResponse.UserProfile getCurrentUser() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
-        }
-        String username = authentication.getName();
-        if (username == null || username.isBlank()) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
-        }
-        User user = userMapper.selectOne(Wrappers.<User>lambdaQuery().eq(User::getUsername, username));
-        if (user == null) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
-        }
-        return toUserProfile(user);
+        return recordAuth("me", () -> {
+            Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+            if (authentication == null || !authentication.isAuthenticated()) {
+                throw new BusinessException(ErrorCode.UNAUTHORIZED);
+            }
+            String username = authentication.getName();
+            if (username == null || username.isBlank()) {
+                throw new BusinessException(ErrorCode.UNAUTHORIZED);
+            }
+            User user = userMapper.selectOne(Wrappers.<User>lambdaQuery().eq(User::getUsername, username));
+            if (user == null) {
+                throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+            }
+            return toUserProfile(user);
+        });
     }
 
     @Override
     @Transactional
     public MessageResponse changePassword(ChangePasswordRequest request) {
-        User user = requireAuthenticatedUser();
-        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
-            throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "当前密码不正确");
+        return recordAuth("change_password", () -> {
+            User user = requireAuthenticatedUser();
+            if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+                throw new BusinessException(ErrorCode.INVALID_CREDENTIALS, "当前密码不正确");
+            }
+            updatePassword(user, request.newPassword());
+            refreshTokenService.revokeAllForUser(user.getId());
+            return new MessageResponse("密码修改成功，请重新登录");
+        });
+    }
+
+    private void recordRefreshConsumed(String outcome) {
+        if (meterRegistry == null) {
+            return;
         }
-        updatePassword(user, request.newPassword());
-        refreshTokenService.revokeAllForUser(user.getId());
-        return new MessageResponse("密码修改成功，请重新登录");
+        meterRegistry.counter(
+                "hoshi.auth.refresh.consumed.total",
+                "outcome", outcome)
+                .increment();
+    }
+
+    private void recordLogoutBlacklisted() {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter("hoshi.auth.logout.blacklisted.total").increment();
+    }
+
+    private <T> T recordAuth(String action, java.util.concurrent.Callable<T> block) {
+        return recordAuth(action, block, ex -> {
+            throw ex;
+        });
+    }
+
+    private <T> T recordAuth(
+            String action,
+            java.util.concurrent.Callable<T> block,
+            java.util.function.Function<RuntimeException, T> errorMapper) {
+        long startTime = System.nanoTime();
+        try {
+            T result = block.call();
+            recordAuthOutcome(action, "success", null, startTime);
+            return result;
+        } catch (BusinessException ex) {
+            recordAuthOutcome(action, "failure", ex.getErrorCode(), startTime);
+            throw ex;
+        } catch (RuntimeException ex) {
+            recordAuthOutcome(action, "failure", ErrorCode.INTERNAL_ERROR, startTime);
+            return errorMapper.apply(ex);
+        } catch (Exception ex) {
+            recordAuthOutcome(action, "failure", ErrorCode.INTERNAL_ERROR, startTime);
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    private void recordAuthOutcome(String action, String outcome, ErrorCode errorCode, long startTime) {
+        if (meterRegistry == null) {
+            return;
+        }
+        String errorCodeTag = errorCode == null ? "0" : Integer.toString(errorCode.getCode());
+        meterRegistry.counter(
+                "hoshi.auth.requests.total",
+                "action", action,
+                "outcome", outcome)
+                .increment();
+        Timer.builder("hoshi.auth.request.duration")
+                .description("Latency of auth requests")
+                .tag("action", action)
+                .tag("outcome", outcome)
+                .register(meterRegistry)
+                .record(Duration.ofNanos(System.nanoTime() - startTime));
+        if (!"success".equals(outcome)) {
+            meterRegistry.counter(
+                    "hoshi.auth.failures.total",
+                    "action", action,
+                    "error_code", errorCodeTag)
+                    .increment();
+        }
     }
 
     private User requireAuthenticatedUser() {
