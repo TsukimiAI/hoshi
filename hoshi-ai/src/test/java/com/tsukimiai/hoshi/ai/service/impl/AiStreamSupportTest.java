@@ -20,14 +20,15 @@ import static org.mockito.Mockito.when;
 class AiStreamSupportTest {
 
     @Test
-    void collectTextAccumulatesStreamingChunks() {
+    void collectAccumulatesStreamingChunksAndReturnsLastResponse() {
         ChatModel model = mock(ChatModel.class);
-        when(model.stream(any(Prompt.class))).thenReturn(Flux.just(
-                new ChatResponse(List.of(new Generation(new AssistantMessage("{\"content\":\"你好")))),
-                new ChatResponse(List.of(new Generation(new AssistantMessage("{\"content\":\"你好呀\""))))));
+        ChatResponse first = new ChatResponse(List.of(new Generation(new AssistantMessage("{\"content\":\"你好"))));
+        ChatResponse last = new ChatResponse(List.of(new Generation(new AssistantMessage("{\"content\":\"你好呀\""))));
+        when(model.stream(any(Prompt.class))).thenReturn(Flux.just(first, last));
 
-        String text = new AiStreamSupport().collectText(model, new Prompt("test"), Duration.ofSeconds(5));
+        AiStreamSupport.CollectedStream collected = new AiStreamSupport().collect(model, new Prompt("test"), Duration.ofSeconds(5));
 
-        assertThat(text).isEqualTo("{\"content\":\"你好呀\"");
+        assertThat(collected.text()).isEqualTo("{\"content\":\"你好呀\"");
+        assertThat(collected.lastResponse()).isSameAs(last);
     }
 }

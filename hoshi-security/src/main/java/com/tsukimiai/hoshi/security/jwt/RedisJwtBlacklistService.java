@@ -2,6 +2,7 @@ package com.tsukimiai.hoshi.security.jwt;
 
 import java.time.Duration;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 public class RedisJwtBlacklistService implements JwtBlacklistService {
@@ -9,9 +10,11 @@ public class RedisJwtBlacklistService implements JwtBlacklistService {
     private static final String KEY_PREFIX = "hoshi:jwt:blacklist:";
 
     private final StringRedisTemplate redisTemplate;
+    private final MeterRegistry meterRegistry;
 
-    public RedisJwtBlacklistService(StringRedisTemplate redisTemplate) {
+    public RedisJwtBlacklistService(StringRedisTemplate redisTemplate, MeterRegistry meterRegistry) {
         this.redisTemplate = redisTemplate;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -27,7 +30,25 @@ public class RedisJwtBlacklistService implements JwtBlacklistService {
         if (jti == null || jti.isBlank()) {
             return false;
         }
-        return Boolean.TRUE.equals(redisTemplate.hasKey(KEY_PREFIX + jti));
+        recordBlacklistCheck();
+        boolean hit = Boolean.TRUE.equals(redisTemplate.hasKey(KEY_PREFIX + jti));
+        if (hit) {
+            recordBlacklistHit();
+        }
+        return hit;
     }
 
+    private void recordBlacklistCheck() {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter("hoshi.security.jwt.blacklist.checks.total").increment();
+    }
+
+    private void recordBlacklistHit() {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter("hoshi.security.jwt.blacklist.hits.total").increment();
+    }
 }

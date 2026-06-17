@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -25,9 +26,16 @@ import com.tsukimiai.hoshi.ai.config.HoshiAiProperties;
 import com.tsukimiai.hoshi.ai.model.AiChatContext;
 import com.tsukimiai.hoshi.ai.model.AiChatRequest;
 import com.tsukimiai.hoshi.ai.model.AiChatTurn;
+import com.tsukimiai.hoshi.ai.metrics.AiTokenMetricsRecorder;
+import com.tsukimiai.hoshi.ai.metrics.AiPromptTextExtractor;
+import com.tsukimiai.hoshi.ai.metrics.AiTokenEstimator;
+import com.tsukimiai.hoshi.ai.metrics.AiTokenUsageExtractor;
 import com.tsukimiai.hoshi.ai.service.XingnaiChatService;
 import com.tsukimiai.hoshi.common.exception.AiServiceException;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import org.springframework.ai.chat.model.ChatResponse;
 import reactor.core.publisher.Flux;
 
 @Service
@@ -44,11 +52,14 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
     private final AiEmotionSupport emotionSupport;
     private final AiStreamSupport streamSupport;
     private final AiCognitionTaskRunner cognitionTaskRunner;
+    private final MeterRegistry meterRegistry;
 
+    @Autowired
     public XingnaiChatServiceImpl(
             ObjectProvider<ChatModel> chatModelProvider,
             HoshiAiProperties hoshiAiProperties,
-            @Value("${spring.ai.openai.chat.model:qwen-plus}") String chatModel) {
+            @Value("${spring.ai.openai.chat.model:qwen-plus}") String chatModel,
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.chatModelProvider = chatModelProvider;
         this.hoshiAiProperties = hoshiAiProperties;
         this.chatModel = chatModel;
@@ -57,7 +68,20 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
         this.emotionSupport = new AiEmotionSupport();
         this.streamSupport = new AiStreamSupport();
         this.cognitionTaskRunner = new AiCognitionTaskRunner(
-                promptFactory, payloadParser, emotionSupport, streamSupport, STREAM_TIMEOUT);
+                promptFactory,
+                payloadParser,
+                emotionSupport,
+                streamSupport,
+                STREAM_TIMEOUT,
+                meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable());
+        this.meterRegistry = meterRegistryProvider == null ? null : meterRegistryProvider.getIfAvailable();
+    }
+
+    public XingnaiChatServiceImpl(
+            ObjectProvider<ChatModel> chatModelProvider,
+            HoshiAiProperties hoshiAiProperties,
+            String chatModel) {
+        this(chatModelProvider, hoshiAiProperties, chatModel, null);
     }
 
     @Override
@@ -69,13 +93,20 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
     public String complete(AiChatRequest request) {
         ChatModel model = requireChatModel();
         Prompt prompt = promptFactory.buildChatPrompt(request);
+        long startTime = System.nanoTime();
+        recordAiRequestStarted("complete", request.webSearchEnabled());
         try {
-            String reply = model.call(prompt).getResult().getOutput().getText();
+            ChatResponse response = model.call(prompt);
+            String reply = response.getResult().getOutput().getText();
             if (!StringUtils.hasText(reply)) {
                 throw AiServiceException.emptyResponse();
             }
+            recordTokenUsageChat("complete", request.webSearchEnabled(), prompt, reply, "success", response);
+            recordAiRequest("complete", request.webSearchEnabled(), "success", startTime);
             return reply.trim();
         } catch (Exception ex) {
+            recordTokenUsageChat("complete", request.webSearchEnabled(), prompt, null, "error", null);
+            recordAiRequest("complete", request.webSearchEnabled(), "error", startTime);
             log.warn("AI completion failed", ex);
             throw AiServiceException.unavailable(ex);
         }
@@ -96,10 +127,46 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
         ChatModel model = requireChatModel();
         Prompt prompt = promptFactory.buildChatPrompt(request);
         AtomicReference<String> accumulated = new AtomicReference<>("");
+        AtomicReference<ChatResponse> lastResponse = new AtomicReference<>();
+        long startTime = System.nanoTime();
+        recordAiRequestStarted("stream", request.webSearchEnabled());
         return model.stream(prompt)
                 .timeout(STREAM_TIMEOUT)
-                .mapNotNull(chunk -> streamSupport.toDelta(chunk, accumulated))
+                .mapNotNull(chunk -> {
+                    lastResponse.set(chunk);
+                    return streamSupport.toDelta(chunk, accumulated);
+                })
                 .filter(StringUtils::hasText)
+                .doOnComplete(() -> {
+                    recordTokenUsageChat(
+                            "stream",
+                            request.webSearchEnabled(),
+                            prompt,
+                            accumulated.get(),
+                            "success",
+                            lastResponse.get());
+                    recordAiRequest("stream", request.webSearchEnabled(), "success", startTime);
+                })
+                .doOnCancel(() -> {
+                    recordTokenUsageChat(
+                            "stream",
+                            request.webSearchEnabled(),
+                            prompt,
+                            accumulated.get(),
+                            "cancelled",
+                            lastResponse.get());
+                    recordAiRequest("stream", request.webSearchEnabled(), "cancelled", startTime);
+                })
+                .doOnError(ex -> {
+                    recordTokenUsageChat(
+                            "stream",
+                            request.webSearchEnabled(),
+                            prompt,
+                            accumulated.get(),
+                            "error",
+                            lastResponse.get());
+                    recordAiRequest("stream", request.webSearchEnabled(), "error", startTime);
+                })
                 .onErrorMap(ex -> {
                     log.warn("AI stream failed: {}", streamSupport.rootCauseMessage(ex), ex);
                     return AiServiceException.unavailable(ex);
@@ -154,11 +221,14 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
 
     @Override
     public AiCognitionResult runCognitionTask(AiCognitionTask task) {
+        long startTime = System.nanoTime();
         try {
-            return cognitionTaskRunner.run(task, requireChatModel(), chatModel);
+            AiCognitionResult result = cognitionTaskRunner.run(task, requireChatModel(), chatModel);
+            recordCognitionTask(task.taskType(), result.status(), startTime);
+            return result;
         } catch (Exception ex) {
             log.warn("AI cognition task {} failed: {}", task.taskType(), ex.getMessage(), ex);
-            return new AiCognitionResult(
+            AiCognitionResult result = new AiCognitionResult(
                     task.taskId(),
                     task.taskType(),
                     AiCognitionStatus.FAILED,
@@ -166,7 +236,77 @@ public class XingnaiChatServiceImpl implements XingnaiChatService {
                     null,
                     List.of(ex.getMessage() == null ? ex.toString() : ex.getMessage()),
                     null);
+            recordCognitionTask(task.taskType(), result.status(), startTime);
+            return result;
         }
+    }
+
+    private void recordAiRequestStarted(String operation, boolean webSearch) {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter(
+                "hoshi.ai.requests.total",
+                "operation", operation,
+                "web_search", Boolean.toString(webSearch))
+                .increment();
+    }
+
+    private void recordAiRequest(String operation, boolean webSearch, String outcome, long startTime) {
+        if (meterRegistry == null) {
+            return;
+        }
+        Timer.builder("hoshi.ai.request.duration")
+                .description("Latency of AI chat requests")
+                .tag("operation", operation)
+                .tag("web_search", Boolean.toString(webSearch))
+                .tag("outcome", outcome)
+                .register(meterRegistry)
+                .record(Duration.ofNanos(System.nanoTime() - startTime));
+    }
+
+    private void recordCognitionTask(AiCognitionTaskType taskType, AiCognitionStatus status, long startTime) {
+        if (meterRegistry == null) {
+            return;
+        }
+        String taskTypeValue = taskType == null ? "unknown" : taskType.name().toLowerCase();
+        String statusValue = status == null ? "unknown" : status.name().toLowerCase();
+        meterRegistry.counter(
+                "hoshi.ai.cognition.tasks.total",
+                "task_type", taskTypeValue,
+                "status", statusValue)
+                .increment();
+        Timer.builder("hoshi.ai.cognition.task.duration")
+                .description("Latency of AI cognition tasks")
+                .tag("task_type", taskTypeValue)
+                .tag("status", statusValue)
+                .register(meterRegistry)
+                .record(Duration.ofNanos(System.nanoTime() - startTime));
+    }
+
+    private void recordTokenUsageChat(
+            String operation,
+            boolean webSearch,
+            Prompt prompt,
+            String completionText,
+            String outcome,
+            ChatResponse response) {
+        if (meterRegistry == null) {
+            return;
+        }
+        AiTokenUsageExtractor.AiTokenUsage tokenUsage = AiTokenUsageExtractor.extract(response)
+                .orElseGet(() -> {
+                    String promptText = AiPromptTextExtractor.extract(prompt);
+                    int promptTokens = AiTokenEstimator.estimateTokens(promptText);
+                    int completionTokens = AiTokenEstimator.estimateTokens(completionText);
+                    return new AiTokenUsageExtractor.AiTokenUsage(
+                            promptTokens,
+                            completionTokens,
+                            promptTokens + completionTokens,
+                            "estimated");
+                });
+        new AiTokenMetricsRecorder(meterRegistry)
+                .recordChat(tokenUsage, operation, webSearch, chatModel, outcome);
     }
 
     private ChatModel requireChatModel() {

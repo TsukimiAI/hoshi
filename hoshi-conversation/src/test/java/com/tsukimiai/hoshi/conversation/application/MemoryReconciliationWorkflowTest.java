@@ -49,6 +49,8 @@ class MemoryReconciliationWorkflowTest {
     private SessionSummaryCodec sessionSummaryCodec;
     @Mock
     private XingnaiChatService xingnaiChatService;
+    @Mock
+    private MemoryReconciliationMetrics metrics;
 
     private MemoryReconciliationWorkflow workflow;
 
@@ -65,7 +67,8 @@ class MemoryReconciliationWorkflowTest {
                 chatContextAssembler,
                 sessionSummaryCodec,
                 xingnaiChatService,
-                new HoshiAiProperties());
+                new HoshiAiProperties(),
+                metrics);
     }
 
     @Test
@@ -107,7 +110,7 @@ class MemoryReconciliationWorkflowTest {
                 List.of(),
                 "{}"));
         when(memoryReconciliationService.applyReconciliationOperations(
-                any(), any(), any(), any(), any(Double.class), any())).thenReturn(0);
+                any(), any(), any(), any(), any(Double.class), any())).thenReturn(2);
 
         workflow.reconcileUser(1L);
 
@@ -123,6 +126,8 @@ class MemoryReconciliationWorkflowTest {
         assertThat(String.valueOf(input.metadata().get("additionalSessionSummaries"))).contains("sessionId=43");
         verify(memoryReconciliationService).applyReconciliationOperations(
                 any(), any(), any(), any(), any(Double.class), any());
+        verify(metrics).recordCompleted();
+        verify(metrics).recordOperationsApplied(2);
     }
 
     private static ChatSession session(Long id) {

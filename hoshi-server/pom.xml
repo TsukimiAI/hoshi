@@ -40,6 +40,10 @@
         </dependency>
         <dependency>
             <groupId>com.tsukimiai</groupId>
+            <artifactId>hoshi-metrics</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.tsukimiai</groupId>
             <artifactId>hoshi-companion</artifactId>
         </dependency>
         <dependency>

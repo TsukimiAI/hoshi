@@ -10,7 +10,6 @@ import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -25,11 +24,9 @@ class RedisJwtBlacklistServiceTest {
     @Mock
     private ValueOperations<String, String> valueOperations;
 
-    @InjectMocks
-    private RedisJwtBlacklistService redisJwtBlacklistService;
-
     @Test
     void blacklistStoresKeyWithTtl() {
+        RedisJwtBlacklistService redisJwtBlacklistService = new RedisJwtBlacklistService(redisTemplate, null);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         redisJwtBlacklistService.blacklist("jti-1", 120);
 
@@ -38,6 +35,7 @@ class RedisJwtBlacklistServiceTest {
 
     @Test
     void blacklistIgnoresInvalidInput() {
+        RedisJwtBlacklistService redisJwtBlacklistService = new RedisJwtBlacklistService(redisTemplate, null);
         redisJwtBlacklistService.blacklist("", 120);
         redisJwtBlacklistService.blacklist("jti-1", 0);
 
@@ -46,6 +44,7 @@ class RedisJwtBlacklistServiceTest {
 
     @Test
     void isBlacklistedChecksRedisKey() {
+        RedisJwtBlacklistService redisJwtBlacklistService = new RedisJwtBlacklistService(redisTemplate, null);
         when(redisTemplate.hasKey("hoshi:jwt:blacklist:jti-2")).thenReturn(true);
 
         assertTrue(redisJwtBlacklistService.isBlacklisted("jti-2"));
@@ -53,6 +52,7 @@ class RedisJwtBlacklistServiceTest {
 
     @Test
     void isBlacklistedReturnsFalseForMissingJti() {
+        RedisJwtBlacklistService redisJwtBlacklistService = new RedisJwtBlacklistService(redisTemplate, null);
         assertFalse(redisJwtBlacklistService.isBlacklisted(null));
         assertFalse(redisJwtBlacklistService.isBlacklisted(" "));
         verifyNoInteractions(redisTemplate);

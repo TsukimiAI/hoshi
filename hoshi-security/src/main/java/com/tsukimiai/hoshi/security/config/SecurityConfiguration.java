@@ -45,7 +45,7 @@ public class SecurityConfiguration {
                                 "/api/v1/auth/reset-password",
                                 "/api/v1/auth/reset-password-by-code")
                         .permitAll()
-                        .requestMatchers("/actuator/health", "/ws/**", "/error").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/prometheus", "/ws/**", "/error").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(SecurityJsonHandlers.authenticationEntryPoint())

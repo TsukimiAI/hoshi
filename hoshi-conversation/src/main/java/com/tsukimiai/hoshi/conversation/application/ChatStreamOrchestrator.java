@@ -1,6 +1,7 @@
 package com.tsukimiai.hoshi.conversation.application;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -8,6 +9,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -41,6 +43,8 @@ import com.tsukimiai.hoshi.conversation.support.StreamClientClosedException;
 import com.tsukimiai.hoshi.conversation.support.StreamPlaybackContext;
 import com.tsukimiai.hoshi.user.entity.User;
 
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
 import reactor.core.publisher.Flux;
 
 @Service
@@ -61,6 +65,7 @@ public class ChatStreamOrchestrator {
     private final HoshiAiProperties hoshiAiProperties;
     private final TransactionTemplate transactionTemplate;
     private final CognitionBackgroundTaskExecutor backgroundTaskExecutor;
+    private final MeterRegistry meterRegistry;
 
     public ChatStreamOrchestrator(
             ChatSessionService chatSessionService,
@@ -75,7 +80,8 @@ public class ChatStreamOrchestrator {
             XingnaiChatService xingnaiChatService,
             HoshiAiProperties hoshiAiProperties,
             PlatformTransactionManager transactionManager,
-            CognitionBackgroundTaskExecutor backgroundTaskExecutor) {
+            CognitionBackgroundTaskExecutor backgroundTaskExecutor,
+            ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.chatSessionService = chatSessionService;
         this.persistenceService = persistenceService;
         this.chatContextAssembler = chatContextAssembler;
@@ -89,12 +95,14 @@ public class ChatStreamOrchestrator {
         this.hoshiAiProperties = hoshiAiProperties;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.backgroundTaskExecutor = backgroundTaskExecutor;
+        this.meterRegistry = meterRegistryProvider.getIfAvailable();
     }
 
     public void streamAssistantReply(
             User user,
             Long sessionId,
             ChatStreamSink sink,
+            String action,
             boolean maybeTitle,
             boolean webSearch,
             ChatStreamPlaybackSettings playback) {
@@ -104,7 +112,7 @@ public class ChatStreamOrchestrator {
         List<AssistantSegment> streamedSegments = new ArrayList<>();
         AtomicReference<CompanionEmotion> carryEmotion = new AtomicReference<>(CompanionEmotion.NORMAL);
         SentenceChunkBuffer sentenceBuffer = new SentenceChunkBuffer(hoshiAiProperties.getMaxSentenceBufferChars());
-        Flux<String> stream = resolveAssistantStream(chatRequest);
+        Flux<String> stream = resolveAssistantStream(chatRequest, action);
         try {
             stream.doOnNext(delta -> {
                 for (String sentence : sentenceBuffer.append(delta)) {
@@ -130,6 +138,7 @@ public class ChatStreamOrchestrator {
         CompanionEmotion assistantEmotion = streamedSegments.isEmpty()
                 ? CompanionEmotion.NORMAL
                 : streamedSegments.get(streamedSegments.size() - 1).emotion();
+        recordSegmentCount(action, streamedSegments.size());
         ChatMessage assistantMessage = transactionTemplate.execute(status -> {
             ChatSession session = chatSessionService.get(user, sessionId);
             ChatMessage saved = persistenceService.insertMessage(
@@ -284,13 +293,36 @@ public class ChatStreamOrchestrator {
         }
     }
 
-    private Flux<String> resolveAssistantStream(AiChatRequest request) {
+    private Flux<String> resolveAssistantStream(AiChatRequest request, String action) {
         String latestUserMessage = chatContextAssembler.findLatestUserMessage(request.context().recentTurns());
         String fixedReply = hoshiAiProperties.findFixedReply(latestUserMessage);
         if (StringUtils.hasText(fixedReply)) {
+            recordFixedReply(action);
             return Flux.just(fixedReply);
         }
         return xingnaiChatService.stream(request);
+    }
+
+    private void recordSegmentCount(String operation, int segmentCount) {
+        if (meterRegistry == null) {
+            return;
+        }
+        DistributionSummary.builder("hoshi.chat.stream.segments")
+                .description("Number of assistant segments emitted per chat stream")
+                .baseUnit("segments")
+                .tag("operation", operation)
+                .register(meterRegistry)
+                .record(Math.max(segmentCount, 0));
+    }
+
+    private void recordFixedReply(String operation) {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter(
+                "hoshi.chat.fixed_reply.total",
+                "operation", operation)
+                .increment();
     }
 
     private AssistantSegment processSentence(
