@@ -3,6 +3,7 @@ import { SecuritySettings } from './SecuritySettings'
 import { PetSettingsSection } from './PetSettingsSection'
 import { ChatSettingsSection } from './ChatSettingsSection'
 import { MemorySettingsSection } from './MemorySettingsSection'
+import { KnowledgeSettingsSection } from './KnowledgeSettingsSection'
 import { useSettings, type SettingsSection } from './SettingsContext'
 import './Settings.css'
 
@@ -11,6 +12,7 @@ const NAV_ITEMS: Array<{ id: SettingsSection; label: string }> = [
   { id: 'security', label: '账号与安全' },
   { id: 'chat', label: '对话' },
   { id: 'memory', label: '记忆' },
+  { id: 'knowledge', label: '知识库' },
   { id: 'pet', label: '桌宠' }
 ]
 
@@ -46,6 +48,7 @@ export function SettingsShell(): React.JSX.Element {
         {section === 'security' ? <SecuritySettings /> : null}
         {section === 'chat' ? <ChatSettingsSection /> : null}
         {section === 'memory' ? <MemorySettingsSection /> : null}
+        {section === 'knowledge' ? <KnowledgeSettingsSection /> : null}
         {section === 'pet' ? <PetSettingsSection /> : null}
       </div>
     </div>

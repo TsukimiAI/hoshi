@@ -25,6 +25,7 @@ import com.tsukimiai.hoshi.conversation.entity.UserMemory;
 import com.tsukimiai.hoshi.conversation.mapper.UserMemoryMapper;
 import com.tsukimiai.hoshi.conversation.service.ChatSessionService;
 import com.tsukimiai.hoshi.conversation.support.retrieval.MemoryRetriever;
+import com.tsukimiai.hoshi.conversation.support.retrieval.NoopMemoryVectorIndexer;
 
 @ExtendWith(MockitoExtension.class)
 class MemoryExtractionWorkflowMemoryActionTest {
@@ -58,7 +59,8 @@ class MemoryExtractionWorkflowMemoryActionTest {
                 hoshiAiProperties,
                 sessionSummaryCodec,
                 memoryReconciliationService,
-                memoryRetriever);
+                memoryRetriever,
+                new NoopMemoryVectorIndexer());
     }
 
     @Test

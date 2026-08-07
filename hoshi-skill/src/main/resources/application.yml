@@ -1,0 +1,58 @@
+spring:
+  config:
+    import:
+      - optional:classpath:application-local.yml
+  application:
+    name: hoshi-skill
+  datasource:
+    url: ${HOSHI_SKILL_DB_URL:jdbc:mysql://localhost:3306/hoshi?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${HOSHI_SKILL_DB_USERNAME:hoshi}
+    password: ${HOSHI_SKILL_DB_PASSWORD:hoshi}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    enabled: false
+  ai:
+    openai:
+      api-key: ${SPRING_AI_OPENAI_API_KEY:${DASHSCOPE_API_KEY:}}
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      embedding:
+        options:
+          model: ${HOSHI_AI_EMBEDDING_MODEL:text-embedding-v3}
+    vectorstore:
+      qdrant:
+        host: ${HOSHI_QDRANT_HOST:localhost}
+        port: ${HOSHI_QDRANT_PORT:6334}
+        collection-name: ${HOSHI_QDRANT_COLLECTION:hoshi_knowledge}
+        initialize-schema: true
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+
+hoshi:
+  skill:
+    knowledge:
+      chunk:
+        max-chars: 1200
+        overlap-chars: 200
+      summary:
+        enabled: true
+        model: ${HOSHI_KNOWLEDGE_SUMMARY_MODEL:qwen-turbo}
+        max-input-chars: 12000
+      retrieve:
+        candidate-multiplier: 2
+        max-queries: 3
+        max-chunks-per-section: 2
+  storage:
+    minio:
+      enabled: ${HOSHI_MINIO_ENABLED:true}
+      endpoint: ${HOSHI_MINIO_ENDPOINT:http://localhost:9000}
+      access-key: ${HOSHI_MINIO_ACCESS_KEY:minioadmin}
+      secret-key: ${HOSHI_MINIO_SECRET_KEY:minioadmin}
+      bucket: ${HOSHI_MINIO_BUCKET:hoshi}
+      avatar-prefix: avatars/
+      public-base-url: ${HOSHI_MINIO_PUBLIC_BASE_URL:http://localhost:9000/hoshi}
+
+server:
+  port: ${HOSHI_SKILL_PORT:8090}
+

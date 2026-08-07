@@ -40,6 +40,8 @@
 
     <modules>
         <module>hoshi-common</module>
+        <module>hoshi-skill-api</module>
+        <module>hoshi-skill</module>
         <module>hoshi-infrastructure</module>
         <module>hoshi-security</module>
         <module>hoshi-user</module>
@@ -77,6 +79,11 @@
             <dependency>
                 <groupId>com.tsukimiai</groupId>
                 <artifactId>hoshi-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tsukimiai</groupId>
+                <artifactId>hoshi-skill-api</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

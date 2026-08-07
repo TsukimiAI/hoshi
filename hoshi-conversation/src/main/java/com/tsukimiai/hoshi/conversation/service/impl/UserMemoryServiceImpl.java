@@ -14,6 +14,7 @@ import com.tsukimiai.hoshi.conversation.dto.MemoryCorrectionResponse;
 import com.tsukimiai.hoshi.conversation.entity.UserMemory;
 import com.tsukimiai.hoshi.conversation.mapper.UserMemoryMapper;
 import com.tsukimiai.hoshi.conversation.service.UserMemoryService;
+import com.tsukimiai.hoshi.conversation.support.retrieval.MemoryVectorIndexer;
 import com.tsukimiai.hoshi.user.entity.User;
 
 @Service
@@ -35,9 +36,11 @@ public class UserMemoryServiceImpl implements UserMemoryService {
             "plan", "mood", "recent_event", "temporary_goal", "current_focus");
 
     private final UserMemoryMapper userMemoryMapper;
+    private final MemoryVectorIndexer memoryVectorIndexer;
 
-    public UserMemoryServiceImpl(UserMemoryMapper userMemoryMapper) {
+    public UserMemoryServiceImpl(UserMemoryMapper userMemoryMapper, MemoryVectorIndexer memoryVectorIndexer) {
         this.userMemoryMapper = userMemoryMapper;
+        this.memoryVectorIndexer = memoryVectorIndexer;
     }
 
     @Override
@@ -152,6 +155,7 @@ public class UserMemoryServiceImpl implements UserMemoryService {
             }
             matched.setLastReinforcedAt(java.time.LocalDateTime.now());
             userMemoryMapper.updateById(matched);
+            memoryVectorIndexer.upsertLongMemory(matched);
             return com.tsukimiai.hoshi.conversation.dto.UserMemoryResponse.from(matched);
         }
 
@@ -176,6 +180,7 @@ public class UserMemoryServiceImpl implements UserMemoryService {
         memory.setCreatedAt(now);
         memory.setUpdatedAt(now);
         userMemoryMapper.insert(memory);
+        memoryVectorIndexer.upsertLongMemory(memory);
         return com.tsukimiai.hoshi.conversation.dto.UserMemoryResponse.from(memory);
     }
 
@@ -214,6 +219,7 @@ public class UserMemoryServiceImpl implements UserMemoryService {
 
         memory.setUpdatedAt(java.time.LocalDateTime.now());
         userMemoryMapper.updateById(memory);
+        memoryVectorIndexer.upsertLongMemory(memory);
         return com.tsukimiai.hoshi.conversation.dto.UserMemoryResponse.from(memory);
     }
 
@@ -224,6 +230,7 @@ public class UserMemoryServiceImpl implements UserMemoryService {
         memory.setStatus(MEMORY_STATUS_ARCHIVED);
         memory.setUpdatedAt(java.time.LocalDateTime.now());
         userMemoryMapper.updateById(memory);
+        memoryVectorIndexer.deleteMemory(user.getId(), memoryId);
     }
 
     private List<com.tsukimiai.hoshi.conversation.dto.UserMemoryResponse> listLongTermMemories(

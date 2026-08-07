@@ -65,7 +65,13 @@ entity/       持久化实体（后续可迁至 infrastructure）
 
 ## 记忆检索
 
-`MemoryRetriever` 接口（默认 `LexicalMemoryRetriever`）负责 short/long 记忆检索打分；`MemoryExtractionWorkflow` 通过该接口读取上下文，后续可替换为 embedding 混合检索实现。
+`MemoryRetriever` 接口（默认 `LexicalMemoryRetriever`）负责 short/long 记忆检索打分；开启 `hoshi.ai.rag.memory-enabled` 后使用 `HybridMemoryRetriever`（词法 + Qdrant）。
+
+## 知识库 RAG
+
+- 开关：`hoshi.ai.rag.knowledge-enabled=true`（推荐）；兼容 `hoshi.skill.knowledge.enabled`
+- 编排：`RetrievalOrchestrator` → `HttpKnowledgeRetriever` → `hoshi-skill` `/v1/skills/knowledge/retrieve`
+- 索引与混合排序在 `hoshi-skill`（`KnowledgeQueryPlanner` + `HybridKnowledgeRanker`）
 
 ## 流式生命周期
 

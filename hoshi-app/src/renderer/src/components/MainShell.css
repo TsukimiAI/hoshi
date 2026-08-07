@@ -763,6 +763,46 @@ html[data-platform='darwin'] .shell__header {
   display: flow-root;
 }
 
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  margin: 0.85rem 0 0.45rem;
+  line-height: 1.45;
+  font-weight: 600;
+  color: var(--hoshi-text);
+}
+
+.chat-markdown h1 {
+  font-size: 1.1rem;
+}
+
+.chat-markdown h2,
+.chat-markdown h3 {
+  font-size: 1.02rem;
+}
+
+.chat-markdown h4,
+.chat-markdown h5,
+.chat-markdown h6 {
+  font-size: 0.98rem;
+}
+
+.chat-markdown h1:first-child,
+.chat-markdown h2:first-child,
+.chat-markdown h3:first-child,
+.chat-markdown h4:first-child,
+.chat-markdown h5:first-child,
+.chat-markdown h6:first-child {
+  margin-top: 0;
+}
+
+.chat-markdown strong {
+  font-weight: 600;
+}
+
 .chat-markdown p,
 .chat-markdown ul,
 .chat-markdown ol,

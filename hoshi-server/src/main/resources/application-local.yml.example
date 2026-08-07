@@ -1,0 +1,22 @@
+# Copy to application-local.yml (gitignored) and fill in secrets.
+# cp hoshi-server/src/main/resources/application-local.yml.example \
+#    hoshi-server/src/main/resources/application-local.yml
+
+spring:
+  ai:
+    openai:
+      api-key: ${DASHSCOPE_API_KEY:your-dashscope-api-key}
+
+hoshi:
+  ai:
+    rag:
+      # One switch for knowledge chat retrieval + skill HTTP client.
+      knowledge-enabled: true
+      # One switch for long-memory vectors (also loads server Qdrant).
+      memory-enabled: true
+      knowledge-budget-tokens: 800
+  skill:
+    knowledge:
+      # Optional legacy alias; knowledge-enabled alone is enough.
+      enabled: true
+      base-url: http://localhost:8090

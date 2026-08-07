@@ -1,1 +1,2 @@
 com.tsukimiai.hoshi.ai.config.AiModuleConfiguration
+com.tsukimiai.hoshi.ai.config.RagVectorStoreConfiguration

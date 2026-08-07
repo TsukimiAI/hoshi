@@ -17,6 +17,10 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 21MB
   # QQ 邮箱：465 + SSL，或 587 + STARTTLS（见 README / application-local.yml.example）
   mail:
     host: ${SMTP_HOST:smtp.qq.com}
@@ -38,6 +42,18 @@ spring:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
       chat:
         model: ${HOSHI_AI_MODEL:qwen3.7-max}
+      embedding:
+        options:
+          model: ${HOSHI_AI_EMBEDDING_MODEL:text-embedding-v3}
+    vectorstore:
+      qdrant:
+        host: ${HOSHI_QDRANT_HOST:localhost}
+        port: ${HOSHI_QDRANT_PORT:6334}
+        collection-name: ${HOSHI_QDRANT_COLLECTION:hoshi_memory}
+        initialize-schema: true
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.vectorstore.qdrant.autoconfigure.QdrantVectorStoreAutoConfiguration
 
 mybatis-plus:
   configuration:
@@ -137,6 +153,29 @@ hoshi:
       只输出标题本身，不要引号、不要句号、不要其它说明。
       用户：{userMessage}
       助手：{assistantReply}
+    rag:
+      # Prefer knowledge-enabled / memory-enabled. `enabled` is a legacy override that also loads server Qdrant.
+      enabled: false
+      knowledge-enabled: false
+      memory-enabled: false
+      knowledge-top-k: 8
+      knowledge-min-score: 0.60
+      knowledge-budget-tokens: 0
+      knowledge-summary-budget-tokens: 2400
+      qdrant-collection: hoshi_knowledge
+      memory-top-k: 6
+      memory-min-score: 0.55
+      memory-qdrant-collection: hoshi_memory
+
+  skill:
+    knowledge:
+      # Legacy alias: setting this true also enables knowledge chat retrieval + skill HTTP client.
+      # Prefer hoshi.ai.rag.knowledge-enabled=true (see application-local.yml.example).
+      enabled: false
+      base-url: ${HOSHI_KNOWLEDGE_SKILL_BASE_URL:http://localhost:8090}
+      timeout-ms: 5000
+      upload-timeout-ms: 120000
+      auth-token: ${HOSHI_KNOWLEDGE_SKILL_AUTH_TOKEN:}
 
   mail:
     # 发件人需与 SMTP 授权邮箱一致（QQ 邮箱要求）

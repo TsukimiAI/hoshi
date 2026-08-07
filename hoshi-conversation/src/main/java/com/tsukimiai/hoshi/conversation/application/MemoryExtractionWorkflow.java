@@ -32,6 +32,7 @@ import com.tsukimiai.hoshi.conversation.mapper.UserMemoryMapper;
 import com.tsukimiai.hoshi.conversation.service.ChatSessionService;
 import com.tsukimiai.hoshi.conversation.support.MemoryContentMatcher;
 import com.tsukimiai.hoshi.conversation.support.retrieval.MemoryRetriever;
+import com.tsukimiai.hoshi.conversation.support.retrieval.MemoryVectorIndexer;
 import com.tsukimiai.hoshi.conversation.stream.ChatStreamSink;
 import com.tsukimiai.hoshi.user.entity.User;
 
@@ -56,6 +57,7 @@ public class MemoryExtractionWorkflow {
     private final SessionSummaryCodec sessionSummaryCodec;
     private final MemoryReconciliationService memoryReconciliationService;
     private final MemoryRetriever memoryRetriever;
+    private final MemoryVectorIndexer memoryVectorIndexer;
 
     public MemoryExtractionWorkflow(
             UserMemoryMapper userMemoryMapper,
@@ -65,7 +67,8 @@ public class MemoryExtractionWorkflow {
             HoshiAiProperties hoshiAiProperties,
             SessionSummaryCodec sessionSummaryCodec,
             MemoryReconciliationService memoryReconciliationService,
-            MemoryRetriever memoryRetriever) {
+            MemoryRetriever memoryRetriever,
+            MemoryVectorIndexer memoryVectorIndexer) {
         this.userMemoryMapper = userMemoryMapper;
         this.chatSessionService = chatSessionService;
         this.persistenceService = persistenceService;
@@ -74,6 +77,7 @@ public class MemoryExtractionWorkflow {
         this.sessionSummaryCodec = sessionSummaryCodec;
         this.memoryReconciliationService = memoryReconciliationService;
         this.memoryRetriever = memoryRetriever;
+        this.memoryVectorIndexer = memoryVectorIndexer;
     }
 
     public void runMemoryExtraction(User user, Long sessionId, ChatMessage assistantMessage, ChatStreamSink sink) {
@@ -292,6 +296,7 @@ public class MemoryExtractionWorkflow {
         memory.setCreatedAt(now);
         memory.setUpdatedAt(now);
         userMemoryMapper.insert(memory);
+        memoryVectorIndexer.upsertLongMemory(memory);
         return memory;
     }
 
@@ -377,6 +382,7 @@ public class MemoryExtractionWorkflow {
         promoted.setCreatedAt(now);
         promoted.setUpdatedAt(now);
         userMemoryMapper.insert(promoted);
+        memoryVectorIndexer.upsertLongMemory(promoted);
         existing.setStatus(MEMORY_STATUS_PROMOTED);
         existing.setUpdatedAt(now);
         userMemoryMapper.updateById(existing);
@@ -396,6 +402,7 @@ public class MemoryExtractionWorkflow {
             existing.setStrengthScore(Math.min(1.0, existing.getStrengthScore() + 0.1));
         }
         userMemoryMapper.updateById(existing);
+        memoryVectorIndexer.upsertLongMemory(existing);
     }
 
     private UserMemory findMatchingMemory(List<UserMemory> existing, AiMemoryCandidate candidate) {

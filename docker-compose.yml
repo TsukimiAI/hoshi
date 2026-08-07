@@ -1,4 +1,39 @@
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: hoshi-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: hoshi
+      MYSQL_USER: hoshi
+      MYSQL_PASSWORD: hoshi
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: hoshi-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   minio:
     image: minio/minio:latest
     container_name: hoshi-minio
@@ -28,9 +63,28 @@ services:
       /bin/sh -c "
       mc alias set hoshi http://minio:9000 minioadmin minioadmin &&
       mc mb --ignore-existing hoshi/hoshi &&
-      mc anonymous set download hoshi/hoshi/avatars
+      mc anonymous set download hoshi/hoshi/avatars &&
+      mc anonymous set download hoshi/hoshi/knowledge
       "
     restart: "no"
 
+  qdrant:
+    image: qdrant/qdrant:v1.13.2
+    container_name: hoshi-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
+  mysql_data:
+  redis_data:
   minio_data:
+  qdrant_data:

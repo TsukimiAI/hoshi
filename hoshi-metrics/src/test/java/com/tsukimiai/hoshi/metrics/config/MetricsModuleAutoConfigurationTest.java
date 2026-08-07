@@ -8,10 +8,12 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import com.tsukimiai.hoshi.companion.metrics.CompanionWebSocketMetrics;
 import com.tsukimiai.hoshi.conversation.application.MemoryReconciliationMetrics;
+import com.tsukimiai.hoshi.conversation.application.RetrievalMetrics;
 import com.tsukimiai.hoshi.conversation.application.proactive.ProactiveConversationMetrics;
 import com.tsukimiai.hoshi.metrics.companion.MicrometerCompanionWebSocketMetrics;
 import com.tsukimiai.hoshi.metrics.memory.MicrometerMemoryReconciliationMetrics;
 import com.tsukimiai.hoshi.metrics.proactive.MicrometerProactiveConversationMetrics;
+import com.tsukimiai.hoshi.metrics.retrieval.MicrometerRetrievalMetrics;
 
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
@@ -32,12 +34,15 @@ class MetricsModuleAutoConfigurationTest {
             assertThat(context).hasSingleBean(ProactiveConversationMetrics.class);
             assertThat(context).hasSingleBean(MemoryReconciliationMetrics.class);
             assertThat(context).hasSingleBean(CompanionWebSocketMetrics.class);
+            assertThat(context).hasSingleBean(RetrievalMetrics.class);
             assertThat(context.getBean(ProactiveConversationMetrics.class))
                     .isInstanceOf(MicrometerProactiveConversationMetrics.class);
             assertThat(context.getBean(MemoryReconciliationMetrics.class))
                     .isInstanceOf(MicrometerMemoryReconciliationMetrics.class);
             assertThat(context.getBean(CompanionWebSocketMetrics.class))
                     .isInstanceOf(MicrometerCompanionWebSocketMetrics.class);
+            assertThat(context.getBean(RetrievalMetrics.class))
+                    .isInstanceOf(MicrometerRetrievalMetrics.class);
         });
     }
 

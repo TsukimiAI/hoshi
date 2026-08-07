@@ -21,6 +21,7 @@ import com.tsukimiai.hoshi.ai.cognition.AiMemoryEvidence;
 import com.tsukimiai.hoshi.ai.cognition.MemoryReconciliationOperation;
 import com.tsukimiai.hoshi.conversation.entity.UserMemory;
 import com.tsukimiai.hoshi.conversation.mapper.UserMemoryMapper;
+import com.tsukimiai.hoshi.conversation.support.retrieval.NoopMemoryVectorIndexer;
 
 @ExtendWith(MockitoExtension.class)
 class MemoryReconciliationServiceTest {
@@ -32,7 +33,7 @@ class MemoryReconciliationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MemoryReconciliationService(userMemoryMapper);
+        service = new MemoryReconciliationService(userMemoryMapper, new NoopMemoryVectorIndexer());
     }
 
     @Test

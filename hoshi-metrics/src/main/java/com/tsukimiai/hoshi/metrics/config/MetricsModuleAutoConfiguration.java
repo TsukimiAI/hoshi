@@ -8,10 +8,12 @@ import org.springframework.core.env.Environment;
 
 import com.tsukimiai.hoshi.companion.metrics.CompanionWebSocketMetrics;
 import com.tsukimiai.hoshi.conversation.application.MemoryReconciliationMetrics;
+import com.tsukimiai.hoshi.conversation.application.RetrievalMetrics;
 import com.tsukimiai.hoshi.conversation.application.proactive.ProactiveConversationMetrics;
 import com.tsukimiai.hoshi.metrics.companion.MicrometerCompanionWebSocketMetrics;
 import com.tsukimiai.hoshi.metrics.memory.MicrometerMemoryReconciliationMetrics;
 import com.tsukimiai.hoshi.metrics.proactive.MicrometerProactiveConversationMetrics;
+import com.tsukimiai.hoshi.metrics.retrieval.MicrometerRetrievalMetrics;
 
 import io.micrometer.core.instrument.MeterRegistry;
 
@@ -42,6 +44,12 @@ public class MetricsModuleAutoConfiguration {
     @Primary
     MemoryReconciliationMetrics micrometerMemoryReconciliationMetrics(MeterRegistry meterRegistry) {
         return new MicrometerMemoryReconciliationMetrics(meterRegistry);
+    }
+
+    @Bean
+    @Primary
+    RetrievalMetrics micrometerRetrievalMetrics(MeterRegistry meterRegistry) {
+        return new MicrometerRetrievalMetrics(meterRegistry);
     }
 
     @Bean

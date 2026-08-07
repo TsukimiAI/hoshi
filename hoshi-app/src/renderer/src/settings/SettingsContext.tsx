@@ -7,7 +7,7 @@ import {
   type ReactNode
 } from 'react'
 
-export type SettingsSection = 'profile' | 'security' | 'chat' | 'memory' | 'pet'
+export type SettingsSection = 'profile' | 'security' | 'chat' | 'memory' | 'knowledge' | 'pet'
 
 interface SettingsContextValue {
   open: boolean

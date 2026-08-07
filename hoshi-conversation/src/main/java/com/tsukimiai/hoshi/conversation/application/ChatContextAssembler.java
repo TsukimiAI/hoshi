@@ -13,7 +13,6 @@ import com.tsukimiai.hoshi.ai.config.HoshiAiProperties;
 import com.tsukimiai.hoshi.ai.model.AiChatContext;
 import com.tsukimiai.hoshi.ai.model.AiChatRequest;
 import com.tsukimiai.hoshi.ai.model.AiChatTurn;
-import com.tsukimiai.hoshi.ai.model.AiMemoryContext;
 import com.tsukimiai.hoshi.ai.model.AiPromptBudget;
 import com.tsukimiai.hoshi.ai.model.AiSessionSummary;
 import com.tsukimiai.hoshi.conversation.entity.ChatMessage;
@@ -30,18 +29,21 @@ public class ChatContextAssembler {
     private final MemoryExtractionWorkflow memoryExtractionWorkflow;
     private final SessionSummaryCodec sessionSummaryCodec;
     private final HoshiAiProperties hoshiAiProperties;
+    private final RetrievalOrchestrator retrievalOrchestrator;
 
     public ChatContextAssembler(
             ChatSessionService chatSessionService,
             ChatMessagePersistenceService persistenceService,
             MemoryExtractionWorkflow memoryExtractionWorkflow,
             SessionSummaryCodec sessionSummaryCodec,
-            HoshiAiProperties hoshiAiProperties) {
+            HoshiAiProperties hoshiAiProperties,
+            RetrievalOrchestrator retrievalOrchestrator) {
         this.chatSessionService = chatSessionService;
         this.persistenceService = persistenceService;
         this.memoryExtractionWorkflow = memoryExtractionWorkflow;
         this.sessionSummaryCodec = sessionSummaryCodec;
         this.hoshiAiProperties = hoshiAiProperties;
+        this.retrievalOrchestrator = retrievalOrchestrator;
     }
 
     public AiChatRequest buildChatRequest(User user, Long sessionId, boolean webSearch) {
@@ -66,17 +68,16 @@ public class ChatContextAssembler {
         String latestUserMessage = StringUtils.hasText(retrievalQueryOverride)
                 ? retrievalQueryOverride.trim()
                 : findLatestUserMessage(recentWindow.turns());
+        List<String> contextQueries = collectPriorUserQueries(recentWindow.turns(), latestUserMessage, 3);
         AiSessionSummary sessionSummary = sessionSummaryCodec.hydrateSessionSummary(session);
-        List<AiMemoryContext> shortMemories = memoryExtractionWorkflow.selectShortMemories(
-                userId, latestUserMessage, promptBudget.shortMemoryTokens());
-        List<AiMemoryContext> longMemories = memoryExtractionWorkflow.selectLongMemories(
-                userId, latestUserMessage, promptBudget.longMemoryTokens());
+        RetrievalBundle retrieval = retrievalOrchestrator.retrieve(
+                userId, latestUserMessage, contextQueries, promptBudget);
         return new AiChatContext(
                 recentWindow.turns(),
                 sessionSummary,
-                shortMemories,
-                longMemories,
-                List.of(),
+                retrieval.shortMemories(),
+                retrieval.longMemories(),
+                retrieval.knowledgeChunks(),
                 promptBudget);
     }
 
@@ -130,6 +131,29 @@ public class ChatContextAssembler {
             }
         }
         return null;
+    }
+
+    List<String> collectPriorUserQueries(List<AiChatTurn> history, String latestUserMessage, int limit) {
+        if (history == null || history.isEmpty() || limit <= 0) {
+            return List.of();
+        }
+        List<String> queries = new ArrayList<>();
+        for (int index = history.size() - 1; index >= 0; index--) {
+            AiChatTurn turn = history.get(index);
+            if (!"user".equalsIgnoreCase(turn.role()) || !StringUtils.hasText(turn.content())) {
+                continue;
+            }
+            String content = turn.content().trim();
+            if (content.equals(latestUserMessage)) {
+                continue;
+            }
+            queries.add(content);
+            if (queries.size() >= limit) {
+                break;
+            }
+        }
+        java.util.Collections.reverse(queries);
+        return queries;
     }
 
     public List<ChatMessage> listUncompactedMessages(List<ChatMessage> messages, Long compressedUntilMessageId) {

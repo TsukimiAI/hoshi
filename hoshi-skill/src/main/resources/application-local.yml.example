@@ -1,0 +1,8 @@
+# Copy to application-local.yml (gitignored) and fill in secrets.
+# cp hoshi-skill/src/main/resources/application-local.yml.example \
+#    hoshi-skill/src/main/resources/application-local.yml
+
+spring:
+  ai:
+    openai:
+      api-key: ${DASHSCOPE_API_KEY:your-dashscope-api-key}

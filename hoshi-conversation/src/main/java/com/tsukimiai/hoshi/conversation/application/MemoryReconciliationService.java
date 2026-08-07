@@ -14,6 +14,7 @@ import com.tsukimiai.hoshi.ai.cognition.MemoryReconciliationOperation;
 import com.tsukimiai.hoshi.conversation.entity.UserMemory;
 import com.tsukimiai.hoshi.conversation.mapper.UserMemoryMapper;
 import com.tsukimiai.hoshi.conversation.support.MemoryContentMatcher;
+import com.tsukimiai.hoshi.conversation.support.retrieval.MemoryVectorIndexer;
 
 @Service
 public class MemoryReconciliationService {
@@ -24,9 +25,11 @@ public class MemoryReconciliationService {
     private static final double RECENTLY_ARCHIVED_SKIP_THRESHOLD = 0.72;
 
     private final UserMemoryMapper userMemoryMapper;
+    private final MemoryVectorIndexer memoryVectorIndexer;
 
-    public MemoryReconciliationService(UserMemoryMapper userMemoryMapper) {
+    public MemoryReconciliationService(UserMemoryMapper userMemoryMapper, MemoryVectorIndexer memoryVectorIndexer) {
         this.userMemoryMapper = userMemoryMapper;
+        this.memoryVectorIndexer = memoryVectorIndexer;
     }
 
     public void archiveByStaleHints(Long userId, List<String> hints) {
@@ -146,6 +149,7 @@ public class MemoryReconciliationService {
         memory.setStatus(MEMORY_STATUS_ARCHIVED);
         memory.setUpdatedAt(LocalDateTime.now());
         userMemoryMapper.updateById(memory);
+        memoryVectorIndexer.deleteMemory(memory.getUserId(), memory.getId());
     }
 
     public List<UserMemory> listActiveMemories(Long userId) {

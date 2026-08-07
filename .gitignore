@@ -34,6 +34,9 @@ build/
 
 ### Local secrets ###
 hoshi-server/src/main/resources/application-local.yml
+hoshi-skill/src/main/resources/application-local.yml
+!hoshi-server/src/main/resources/application-local.yml.example
+!hoshi-skill/src/main/resources/application-local.yml.example
 
 ### Frontend ###
 hoshi-web/node_modules/
