@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "lib": ["ES2022", "DOM"],
+    "baseUrl": "../..",
+    "paths": {
+      "@hoshi/shared": ["packages/shared/src/index.ts"],
+      "@hoshi/agent": ["packages/agent/src/index.ts"]
+    }
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/agent" }
+  ]
+}

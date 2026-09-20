@@ -1,0 +1,38 @@
+{
+  "name": "@hoshi/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc -b tsconfig.json && cp src/renderer/index.html dist/renderer/index.html && cp src/renderer/styles.css dist/renderer/styles.css && cp src/renderer/settings.html dist/renderer/settings.html && cp src/renderer/settings.css dist/renderer/settings.css && cp src/renderer/audio-player.html dist/renderer/audio-player.html",
+    "fetch-whisper": "node scripts/fetch-whisper.mjs",
+    "dev": "node scripts/fetch-whisper.mjs && pnpm run build && electron .",
+    "typecheck": "tsc -b tsconfig.json --pretty false",
+    "pack": "node scripts/fetch-whisper.mjs && electron-builder --mac"
+  },
+  "build": {
+    "appId": "local.hoshi.desktop",
+    "productName": "Hoshi",
+    "files": ["dist/**/*", "package.json"],
+    "extraResources": [
+      {
+        "from": "vendor/whisper/${arch}",
+        "to": "whisper"
+      }
+    ],
+    "mac": {
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "星奈需要麦克风进行语音对话"
+      }
+    }
+  },
+  "dependencies": {
+    "@hoshi/agent": "workspace:*",
+    "@hoshi/shared": "workspace:*",
+    "dotenv": "^16.4.5",
+    "electron": "^32.1.2"
+  },
+  "devDependencies": {
+    "electron-builder": "^25.1.8"
+  }
+}

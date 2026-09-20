@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+  <body>
+    <script>
+      let ctx = null;
+      let at = 0;
+      let sources = [];
+
+      const ensure = async () => {
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        if (!Ctor) {
+          return null;
+        }
+        if (!ctx || ctx.state === "closed") {
+          ctx = new Ctor();
+          at = 0;
+        }
+        if (ctx.state === "suspended") {
+          await ctx.resume();
+        }
+        return ctx;
+      };
+
+      window.hoshiTts.onPcm(async (bytes, sampleRate) => {
+        const audio = await ensure();
+        if (!audio) {
+          return;
+        }
+        const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        const copy = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+        const pcm = new Int16Array(copy);
+        if (pcm.length === 0) {
+          return;
+        }
+        const floats = new Float32Array(pcm.length);
+        for (let i = 0; i < pcm.length; i += 1) {
+          floats[i] = pcm[i] / 32768;
+        }
+        const buffer = audio.createBuffer(1, floats.length, sampleRate || 22050);
+        buffer.copyToChannel(floats, 0);
+        const src = audio.createBufferSource();
+        src.buffer = buffer;
+        src.connect(audio.destination);
+        const startAt = Math.max(audio.currentTime, at);
+        src.start(startAt);
+        at = startAt + buffer.duration;
+        sources.push(src);
+        src.onended = () => {
+          sources = sources.filter((item) => item !== src);
+        };
+      });
+
+      window.hoshiTts.onStop(() => {
+        for (const src of sources) {
+          try {
+            src.stop();
+          } catch {
+            // ignore
+          }
+        }
+        sources = [];
+        at = ctx ? ctx.currentTime : 0;
+      });
+
+      void ensure();
+    </script>
+  </body>
+</html>

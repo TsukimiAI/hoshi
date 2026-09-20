@@ -1,0 +1,22 @@
+{
+  "name": "hoshi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hoshi desktop pet MVP",
+  "main": "apps/desktop/dist/main/index.js",
+  "packageManager": "pnpm@9.12.3",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @hoshi/desktop dev",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "eval:memory": "HOSHI_MEMORY_EVAL=1 vitest run packages/agent/src/memory/eval/live.test.ts",
+    "coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@vitest/coverage-v8": "^2.1.1",
+    "typescript": "^5.5.3",
+    "vitest": "^2.1.1"
+  }
+}

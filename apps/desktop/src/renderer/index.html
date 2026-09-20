@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>星奈桌宠</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main id="overlay">
+      <section id="scene">
+        <button id="pet-anchor" type="button" aria-label="星奈">
+          <img id="pet" alt="pet" />
+        </button>
+        <nav id="fan-menu" class="fan-hidden" aria-hidden="true">
+          <button id="fan-session-btn" class="fan-btn" type="button">会话</button>
+          <button id="fan-settings-btn" class="fan-btn" type="button">设置</button>
+        </nav>
+        <aside id="dock" class="dock-hidden" aria-hidden="true">
+          <section id="session-panel" class="dock-panel hidden">
+            <div id="session-header">
+              <button id="new-session-btn" type="button">新建会话</button>
+            </div>
+            <div id="sessions-list"></div>
+          </section>
+          <div id="replies" aria-live="polite"></div>
+          <form id="chat-form">
+            <input id="chat-input" type="text" placeholder="和星奈说点什么…" />
+            <button id="ptt-btn" type="button">按住说话</button>
+            <button id="live-btn" type="button">实时</button>
+            <button id="send-btn" type="submit">发送</button>
+          </form>
+          <div id="status-row"><span id="status">就绪</span></div>
+        </aside>
+      </section>
+    </main>
+    <script src="./helpers.js"></script>
+    <script src="./panelAction.js"></script>
+    <script src="./index.js"></script>
+  </body>
+</html>

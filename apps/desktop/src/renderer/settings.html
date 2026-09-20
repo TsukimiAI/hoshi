@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>星奈设置</title>
+    <link rel="stylesheet" href="./settings.css" />
+  </head>
+  <body>
+    <div id="settings-shell">
+      <aside id="settings-nav">
+        <button class="nav-btn active" type="button" data-section="model">模型</button>
+        <button class="nav-btn" type="button" data-section="chat">对话</button>
+        <button class="nav-btn" type="button" data-section="memory">记忆</button>
+        <button class="nav-btn" type="button" data-section="usage">用量</button>
+        <button class="nav-btn" type="button" data-section="presentation">表现</button>
+        <button class="nav-btn" type="button" data-section="voice">语音</button>
+        <button class="nav-btn" type="button" data-section="plugins">插件市场</button>
+      </aside>
+      <section id="settings-main">
+        <form id="settings-form">
+          <div class="section" data-section="model">
+            <h1>模型配置</h1>
+            <label>API Key<input id="apiKey" type="password" autocomplete="off" /></label>
+            <label>Base URL<input id="baseUrl" type="text" /></label>
+            <label>模型名<input id="model" type="text" /></label>
+          </div>
+          <div class="section hidden" data-section="chat">
+            <h1>对话配置</h1>
+            <label>上下文预算<input id="contextBudget" type="number" min="1" /></label>
+            <label>压缩 token 阈值<input id="compactTriggerToken" type="number" min="1" /></label>
+            <label>压缩消息条数<input id="compactTriggerMsgCount" type="number" min="1" /></label>
+            <label>压缩后保留最近条数<input id="compactKeepRecent" type="number" min="1" /></label>
+            <label>参考站点（一行一个）<textarea id="referenceSites" class="short" rows="4"></textarea></label>
+          </div>
+          <div class="section hidden" data-section="memory">
+            <h1>记忆</h1>
+            <label class="plugin-toggle"><input id="memoryAutoWrite" type="checkbox" />自动写入长期记忆</label>
+            <div id="memory-list"></div>
+          </div>
+          <div class="section hidden" data-section="usage">
+            <h1>Token 用量</h1>
+            <p class="field-hint">仅统计供应商返回的真实用量</p>
+            <h2 class="usage-h">累计</h2>
+            <div id="usage-all" class="usage-grid"></div>
+            <h2 class="usage-h">今日</h2>
+            <div id="usage-today" class="usage-grid"></div>
+            <h2 class="usage-h">分类</h2>
+            <div id="usage-purpose"></div>
+            <h2 class="usage-h">按会话</h2>
+            <div id="usage-sessions"></div>
+            <div class="plugin-actions">
+              <button id="refresh-usage" type="button">刷新</button>
+            </div>
+          </div>
+          <div class="section hidden" data-section="presentation">
+            <h1>表现配置</h1>
+            <label>打字间隔(ms)<input id="typeCharMs" type="number" min="1" /></label>
+            <label>句间隔(ms)<input id="sentenceGapMs" type="number" min="1" /></label>
+            <label>气泡上限<input id="maxAssistantBubbles" type="number" min="1" /></label>
+            <label>淡出延迟(ms)<input id="fadeDelayMs" type="number" min="1" /></label>
+            <label>闲置收起(ms)<input id="panelIdleCloseMs" type="number" min="1" /></label>
+          </div>
+          <div class="section hidden" data-section="voice">
+            <h1>语音</h1>
+            <label>热词（逗号分隔）<input id="hotwords" type="text" /></label>
+            <label>预编译热词 ID（可选）<input id="hotwordVocabularyId" type="text" /></label>
+            <label>百炼 API Key（语音，空则用模型）<input id="dashscopeApiKey" type="password" autocomplete="off" /></label>
+            <label>百炼 Base URL（语音，空则用模型）<input id="dashscopeBaseUrl" type="text" /></label>
+            <p class="field-hint">听（ASR）</p>
+            <div class="radio-row">
+              <label class="inline"><input type="radio" name="asrBackend" value="dashscope" />百炼 Fun-ASR</label>
+              <label class="inline"><input type="radio" name="asrBackend" value="whisper" />本机 Whisper</label>
+            </div>
+            <div id="whisper-fields" class="hidden">
+              <button id="download-whisper" type="button">下载 Whisper 模型</button>
+              <details id="whisper-paths">
+                <summary>自定义路径（选填）</summary>
+                <label>whisper-cli 路径<input id="whisperBin" type="text" placeholder="空则用内置" /></label>
+                <label>ggml 模型路径<input id="whisperModelPath" type="text" placeholder="空则用已下载模型" /></label>
+              </details>
+            </div>
+            <p class="field-hint">说（TTS）</p>
+            <label class="plugin-toggle"><input id="ttsEnabled" type="checkbox" />语音播报</label>
+            <div class="radio-row">
+              <label class="inline"><input type="radio" name="ttsBackend" value="dashscope" />百炼 CosyVoice</label>
+              <label class="inline"><input type="radio" name="ttsBackend" value="gpt-sovits" />本机 GPT-SoVITS</label>
+            </div>
+            <div id="dashscope-fields">
+              <label>TTS 模型名（填 cosyvoice-v2，不要填音色）<input id="ttsModel" type="text" placeholder="cosyvoice-v2" /></label>
+              <label>音色 voice_id（填 longxiaochun_v2）<input id="ttsVoice" type="text" placeholder="longxiaochun_v2" /></label>
+            </div>
+            <div id="gsv-fields" class="hidden">
+              <label>GPT-SoVITS 地址<input id="gsvBaseUrl" type="text" /></label>
+              <label>参考音频路径<input id="gsvRefAudioPath" type="text" /></label>
+              <label>参考文本<input id="gsvPromptText" type="text" /></label>
+              <label>参考语言<input id="gsvPromptLang" type="text" /></label>
+              <label>GPT 权重路径（可选）<input id="gsvGptWeights" type="text" /></label>
+              <label>SoVITS 权重路径（可选）<input id="gsvSovitsWeights" type="text" /></label>
+              <button id="test-gsv" type="button">测试 GPT-SoVITS</button>
+            </div>
+          </div>
+          <div class="section hidden" data-section="plugins">
+            <h1>插件市场</h1>
+            <div id="plugin-list"></div>
+            <div class="plugin-actions">
+              <button id="open-plugins-dir" type="button">打开插件目录</button>
+              <button id="refresh-plugins" type="button">刷新</button>
+            </div>
+          </div>
+          <div id="settings-footer">
+            <span id="save-status"></span>
+            <button id="save-btn" type="submit">保存</button>
+          </div>
+        </form>
+      </section>
+    </div>
+    <script src="./settings.js"></script>
+  </body>
+</html>
