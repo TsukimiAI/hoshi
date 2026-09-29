@@ -1,3 +1,4 @@
+import type { CanvasItem } from "./canvas";
 import type { Emotion } from "./emotion";
 
 export type ChatMessageRole = "system" | "user" | "assistant";
@@ -11,6 +12,8 @@ export interface ChatRequestBody {
   message: string;
   sessionId?: string;
   history?: ChatMessage[];
+  workspace?: "desk";
+  images?: Array<{ mime: string; data: string }>;
 }
 
 export interface LlmUsage {
@@ -117,4 +120,60 @@ export interface ErrorEvent {
   };
 }
 
-export type AgentEvent = EmotionEvent | SentenceEvent | DoneEvent | ErrorEvent;
+export interface CitationItem {
+  chunkId: string;
+  docId: string;
+  documentTitle: string;
+  collectionId: string;
+  collectionName: string;
+  snippet: string;
+  score: number;
+}
+
+export interface CitationEvent {
+  event: "citation";
+  data: {
+    callId: string;
+    citations: CitationItem[];
+  };
+}
+
+export interface TurnEvent {
+  event: "turn";
+  data: {
+    turnId: string;
+    sessionId: string;
+    userMessageId: string;
+  };
+}
+
+export interface CanvasEvent {
+  event: "canvas";
+  data: {
+    turnId: string;
+    sessionId?: string;
+    items: CanvasItem[];
+    validationError?: string;
+  };
+}
+
+export interface ProgressEvent {
+  event: "progress";
+  data: {
+    phase: "think" | "think_done" | "tool_start" | "tool_done";
+    name?: string;
+    detail?: string;
+    ok?: boolean;
+    elapsedMs?: number;
+  };
+}
+
+export type AgentEvent =
+  | EmotionEvent
+  | SentenceEvent
+  | DoneEvent
+  | ErrorEvent
+  | CitationEvent
+  | TurnEvent
+  | CanvasEvent
+  | ProgressEvent;

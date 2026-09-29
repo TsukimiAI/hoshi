@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>启动器</title>
+  <style>
+    :root { --hoshi-bg: #191a3c; --hoshi-font: system-ui; --hoshi-dialog: #f3f1ff; --hoshi-menu: #ffffff; }
+    body { margin: 0; font: 13px/1.4 var(--hoshi-font); color: var(--hoshi-dialog); background: var(--hoshi-bg); padding: 12px; position: relative; min-height: 100%; }
+    h1 { font-size: 14px; margin: 0 0 10px; }
+    button { display: block; width: 100%; text-align: left; margin: 0 0 6px; cursor: pointer; background: var(--hoshi-menu); }
+    #deco { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    #deco img, #deco span { position: absolute; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="deco"></div>
+  <h1 id="title">启动器</h1>
+  <div id="list"></div>
+  <script src="launcher.js"></script>
+</body>
+</html>

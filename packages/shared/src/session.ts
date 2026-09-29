@@ -8,9 +8,12 @@ export function sessionTitleFromUserMessage(message: string): string {
   return message.replace(/\s+/g, " ").trim().slice(0, SESSION_TITLE_MAX_LEN);
 }
 
+export type SessionKind = "chat" | "desk";
+
 export interface SessionItem {
   id: string;
   title: string;
+  kind: SessionKind;
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string | null;
@@ -37,9 +40,9 @@ export interface SessionMessagesResponse {
   messages: SessionMessage[];
 }
 
-export type UsagePurpose = "chat" | "tool" | "compact" | "extract" | "asr";
+export type UsagePurpose = "chat" | "tool" | "compact" | "extract" | "asr" | "embed";
 
-export const USAGE_PURPOSES: UsagePurpose[] = ["chat", "tool", "compact", "extract", "asr"];
+export const USAGE_PURPOSES: UsagePurpose[] = ["chat", "tool", "compact", "extract", "asr", "embed"];
 
 export interface UsageTotals {
   promptTokens: number;

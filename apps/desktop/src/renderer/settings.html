@@ -15,6 +15,7 @@
         <button class="nav-btn" type="button" data-section="usage">用量</button>
         <button class="nav-btn" type="button" data-section="presentation">表现</button>
         <button class="nav-btn" type="button" data-section="voice">语音</button>
+        <button class="nav-btn" type="button" data-section="knowledge">知识库</button>
         <button class="nav-btn" type="button" data-section="plugins">插件市场</button>
       </aside>
       <section id="settings-main">
@@ -32,6 +33,7 @@
             <label>压缩消息条数<input id="compactTriggerMsgCount" type="number" min="1" /></label>
             <label>压缩后保留最近条数<input id="compactKeepRecent" type="number" min="1" /></label>
             <label>参考站点（一行一个）<textarea id="referenceSites" class="short" rows="4"></textarea></label>
+            <label>DeepSeek API Key（画布联网，空则在模型 Base URL 为 DeepSeek 时复用模型 Key）<input id="deepseekApiKey" type="password" autocomplete="off" /></label>
           </div>
           <div class="section hidden" data-section="memory">
             <h1>记忆</h1>
@@ -99,6 +101,25 @@
               <label>SoVITS 权重路径（可选）<input id="gsvSovitsWeights" type="text" /></label>
               <button id="test-gsv" type="button">测试 GPT-SoVITS</button>
             </div>
+          </div>
+          <div class="section hidden" data-section="knowledge">
+            <h1>知识库</h1>
+            <label class="plugin-toggle"><input id="kbEnabled" type="checkbox" />启用知识库检索</label>
+            <label>嵌入模型名<input id="kbEmbeddingModel" type="text" placeholder="text-embedding-v4" /></label>
+            <label>嵌入 Base URL（空则用模型配置）<input id="kbEmbeddingBaseUrl" type="text" /></label>
+            <label>嵌入 API Key（空则用模型配置）<input id="kbEmbeddingApiKey" type="password" autocomplete="off" /></label>
+            <label>检索返回条数<input id="kbTopK" type="number" min="1" max="50" /></label>
+            <label>最低相似度阈值（0~1，仅作用于向量语义路）<input id="kbMinScore" type="number" min="0" max="1" step="0.1" /></label>
+            <label>查询改写
+              <select id="kbQueryRewrite">
+                <option value="off">关闭</option>
+                <option value="rewrite">改写（单查询）</option>
+                <option value="multi">多查询扩展</option>
+              </select>
+            </label>
+            <label class="plugin-toggle"><input id="kbRerankEnabled" type="checkbox" />启用重排（Rerank，提升检索精度）</label>
+            <label>重排模型名<input id="kbRerankModel" type="text" placeholder="gte-rerank-v2" /></label>
+            <p class="field-hint">更换嵌入模型（维度不同）时会自动重建索引；也可在工作台手动「重建索引」。</p>
           </div>
           <div class="section hidden" data-section="plugins">
             <h1>插件市场</h1>

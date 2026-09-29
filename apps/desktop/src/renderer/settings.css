@@ -1,10 +1,17 @@
+:root {
+  --hoshi-bg: #f4f6fb;
+  --hoshi-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --hoshi-dialog: #ffffff;
+  --hoshi-menu: #ffffff;
+}
+
 html,
 body {
   margin: 0;
   height: 100%;
-  background: #f4f6fb;
+  background: var(--hoshi-bg);
   color: #2a3148;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--hoshi-font);
 }
 
 #settings-shell {
@@ -279,6 +286,12 @@ textarea.short {
 .memory-card-body input {
   width: 100%;
   box-sizing: border-box;
+}
+
+.memory-source {
+  font-size: 11px;
+  color: #7d89b8;
+  margin-top: 4px;
 }
 
 .memory-card-actions {

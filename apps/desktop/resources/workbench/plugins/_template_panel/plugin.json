@@ -1,0 +1,28 @@
+{
+  "id": "panel_template",
+  "kind": "native",
+  "template": "panel",
+  "name": "播放器",
+  "description": "宿主播放器，只填 slots",
+  "version": "0.1.0",
+  "tool": {
+    "name": "panel_template",
+    "description": "ping 或 import 路径",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["ping", "import"] },
+        "paths": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["action"]
+    }
+  },
+  "slots": {
+    "title": "播放器",
+    "multiple": true,
+    "filters": [{ "name": "音频", "extensions": ["mp3", "m4a", "flac", "wav", "aac", "ogg"] }]
+  },
+  "ui": {
+    "menu": { "label": "播放" }
+  }
+}

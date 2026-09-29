@@ -4,6 +4,7 @@ async function bootstrap() {
   const scene = document.getElementById("scene") as HTMLElement;
   const fanMenu = document.getElementById("fan-menu") as HTMLDivElement;
   const fanSessionBtn = document.getElementById("fan-session-btn") as HTMLButtonElement;
+  const fanWorkbenchBtn = document.getElementById("fan-workbench-btn") as HTMLButtonElement;
   const fanSettingsBtn = document.getElementById("fan-settings-btn") as HTMLButtonElement;
   const dock = document.getElementById("dock") as HTMLDivElement;
   const sessionPanel = document.getElementById("session-panel") as HTMLDivElement;
@@ -17,6 +18,9 @@ async function bootstrap() {
   const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
   const pttBtn = document.getElementById("ptt-btn") as HTMLButtonElement;
   const liveBtn = document.getElementById("live-btn") as HTMLButtonElement;
+  const soundBar = document.getElementById("sound-bar") as HTMLDivElement;
+  const soundPlay = document.getElementById("sound-play") as HTMLButtonElement;
+  const soundVol = document.getElementById("sound-vol") as HTMLInputElement;
   const hoshi = (window as Window & { hoshi?: HoshiApi }).hoshi;
 
   if (!hoshi) {
@@ -28,11 +32,103 @@ async function bootstrap() {
   if (config.presentation) {
     applyPresentation(config.presentation);
   }
+  const paintTheme = async (): Promise<void> => {
+    if (!hoshi.getTheme) return;
+    applyHoshiTheme((await hoshi.getTheme())?.tokens);
+  };
+  let themeAudio: HTMLAudioElement | null = null;
+  const ensureThemeAudio = (): HTMLAudioElement => {
+    if (!themeAudio) {
+      themeAudio = new Audio();
+      themeAudio.loop = false;
+      themeAudio.volume = Number(soundVol.value) / 100;
+      themeAudio.addEventListener("play", () => {
+        soundPlay.textContent = "⏸";
+      });
+      themeAudio.addEventListener("pause", () => {
+        soundPlay.textContent = "▶";
+      });
+      themeAudio.addEventListener("ended", () => {
+        soundPlay.textContent = "▶";
+      });
+    }
+    return themeAudio;
+  };
+  const loadThemeSound = async (): Promise<void> => {
+    if (!hoshi.getThemeSound) {
+      soundBar.hidden = true;
+      return;
+    }
+    try {
+      const url = await hoshi.getThemeSound();
+      if (url) {
+        const audio = ensureThemeAudio();
+        audio.src = url;
+        soundBar.hidden = false;
+        soundPlay.textContent = "▶";
+      } else {
+        soundBar.hidden = true;
+      }
+    } catch {
+      soundBar.hidden = true;
+    }
+  };
+  await paintTheme();
+  await loadThemeSound();
+  try {
+    const vol = (await hoshi.getSettings()).presentation?.soundVolume;
+    if (typeof vol === "number" && Number.isFinite(vol)) {
+      soundVol.value = String(Math.round(vol * 100));
+      ensureThemeAudio().volume = vol;
+    }
+  } catch {
+    /* 用默认 80 */
+  }
+  soundPlay.addEventListener("click", () => {
+    const audio = ensureThemeAudio();
+    if (!audio.src) return;
+    if (audio.paused) {
+      void audio.play().catch(() => undefined);
+    } else {
+      audio.pause();
+    }
+  });
+  let soundVolTimer: ReturnType<typeof setTimeout> | null = null;
+  soundVol.addEventListener("input", () => {
+    const volume = Number(soundVol.value) / 100;
+    ensureThemeAudio().volume = volume;
+    if (soundVolTimer) {
+      clearTimeout(soundVolTimer);
+    }
+    soundVolTimer = setTimeout(() => {
+      soundVolTimer = null;
+      void (async () => {
+        try {
+          const settings = await hoshi.getSettings();
+          await hoshi.saveSettings({
+            ...settings,
+            presentation: { ...settings.presentation, soundVolume: volume }
+          });
+        } catch {
+          /* ignore */
+        }
+      })();
+    }, 300);
+  });
   hoshi.onSettingsUpdated((next) => {
     applyPresentation(next.presentation);
+    void paintTheme();
+    void loadThemeSound();
     const voice = (next as { voice?: { ttsEnabled?: boolean } }).voice;
     if (voice) {
       ttsEnabled = voice.ttsEnabled !== false;
+    }
+  });
+  hoshi.onThemePreview?.((tokens) => {
+    if (tokens) {
+      applyHoshiTheme(tokens);
+    } else {
+      void paintTheme();
     }
   });
   let ttsEnabled = true;
@@ -49,6 +145,34 @@ async function bootstrap() {
     activeId: "" as string
   };
   const spriteCache = new Map<Emotion, string>();
+  const fanPluginActions = document.getElementById("fan-plugin-actions") as HTMLDivElement;
+  const refreshPluginFan = async (): Promise<void> => {
+    if (!fanPluginActions) {
+      return;
+    }
+    fanPluginActions.replaceChildren();
+    try {
+      const actions = await hoshi.listPluginActions();
+      for (const action of actions) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "fan-btn";
+        btn.textContent = action.label;
+        btn.addEventListener("click", () => {
+          retractFanMenu();
+          closePanel();
+          if (action.kind === "panel") {
+            void hoshi.openPluginPanel(action.pluginId);
+          } else {
+            void hoshi.openPluginWindow(action.pluginId, action.window);
+          }
+        });
+        fanPluginActions.appendChild(btn);
+      }
+    } catch {
+      return;
+    }
+  };
   const typewriterState: TypewriterState = {
     queue: [],
     running: false,
@@ -392,11 +516,24 @@ async function bootstrap() {
     }
   });
 
+  fanWorkbenchBtn.addEventListener("click", () => {
+    retractFanMenu();
+    closePanel();
+    void hoshi.openWorkbench();
+  });
+
   fanSettingsBtn.addEventListener("click", () => {
     retractFanMenu();
     closePanel();
     void hoshi.openSettings();
   });
+
+  hoshi.onSettingsUpdated(() => {
+    spriteCache.clear();
+    void setPetEmotion(hoshi, pet, config.defaultEmotion, spriteCache);
+    void refreshPluginFan();
+  });
+  void refreshPluginFan();
 
   newSessionBtn.addEventListener("click", async () => {
     try {
@@ -746,7 +883,7 @@ async function bootstrap() {
       }
       const pcm = floatToPcm16(resampled);
       if (liveVoiceWs && liveVoiceWs.readyState === WebSocket.OPEN) {
-        liveVoiceWs.send(pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength));
+        liveVoiceWs.send(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
       }
     });
     if (!liveActive) {
@@ -763,6 +900,49 @@ async function bootstrap() {
     }
     ttsAwaiting = false;
     void finalizeDoneIfReady(typewriterState.sessionId);
+  };
+
+  const appendCitations = (citations: Array<{ chunkId: string; documentTitle: string; snippet: string }>): void => {
+    if (citations.length === 0) {
+      return;
+    }
+    const el = document.createElement("div");
+    el.className = "citations";
+    citations.forEach((citation, index) => {
+      const chip = document.createElement("span");
+      chip.className = "citation-chip";
+      chip.title = citation.snippet;
+      const label = document.createElement("span");
+      label.className = "citation-label";
+      label.textContent = `[${index + 1}] ${citation.documentTitle}`;
+      chip.appendChild(label);
+      if (typeof hoshi?.rememberKbChunk === "function") {
+        const remember = document.createElement("button");
+        remember.type = "button";
+        remember.className = "citation-remember";
+        remember.textContent = "记住";
+        remember.title = "摘录进记忆";
+        remember.addEventListener("click", () => {
+          void (async () => {
+            try {
+              await hoshi.rememberKbChunk!(citation.chunkId);
+              remember.textContent = "已记住 ✓";
+              remember.disabled = true;
+            } catch {
+              remember.textContent = "失败";
+              window.setTimeout(() => {
+                remember.textContent = "记住";
+                remember.disabled = false;
+              }, 1500);
+            }
+          })();
+        });
+        chip.appendChild(remember);
+      }
+      el.appendChild(chip);
+    });
+    replies.appendChild(el);
+    replies.scrollTop = replies.scrollHeight;
   };
 
   const feedLiveEvent = (event: AgentEvent): void => {
@@ -782,6 +962,9 @@ async function bootstrap() {
       },
       onError: (msg) => {
         status.textContent = `实时: ${msg}`;
+      },
+      onCitation: (citations) => {
+        appendCitations(citations);
       }
     });
   };
@@ -1145,6 +1328,9 @@ async function bootstrap() {
               pttTtsWs?.close();
               pttTtsWs = null;
             }
+          },
+          onCitation: (citations) => {
+            appendCitations(citations);
           }
         });
       });

@@ -1,0 +1,22 @@
+{
+  "id": "theme_template",
+  "kind": "native",
+  "template": "theme",
+  "name": "主题",
+  "description": "星奈立绘与颜色",
+  "version": "0.1.0",
+  "tool": {
+    "name": "theme_template",
+    "description": "ping",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["ping"] }
+      },
+      "required": ["action"]
+    }
+  },
+  "contributes": {
+    "sprites": {}
+  }
+}

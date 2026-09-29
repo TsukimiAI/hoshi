@@ -13,8 +13,9 @@
     }
   },
   "include": ["src"],
-  "references": [
+    "references": [
     { "path": "../../packages/shared" },
     { "path": "../../packages/agent" }
-  ]
+  ],
+  "exclude": ["src/**/*.test.ts"]
 }

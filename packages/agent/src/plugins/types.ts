@@ -1,4 +1,4 @@
-import type { PluginSettingField, PluginSource } from "@hoshi/shared";
+import type { PluginSettingField, PluginSource, PluginContributes, PluginUi } from "@hoshi/shared";
 
 export interface PluginToolSchema {
   name: string;
@@ -13,10 +13,30 @@ export interface PluginManifest {
   version: string;
   tool: PluginToolSchema;
   settingsFields?: PluginSettingField[];
+  contributes?: PluginContributes;
+  ui?: PluginUi;
 }
+
+export type PluginPickOpts = {
+  multiple?: boolean;
+  directories?: boolean;
+  filters?: { name: string; extensions: string[] }[];
+};
+
+export type HostAppInfo = { name: string; path: string; names: string[] };
+
+export type ExecResult = { code: number; stdout: string; stderr: string };
 
 export interface PluginExecuteContext {
   config: Record<string, string>;
+  storage: {
+    get: (key: string) => string | null;
+    set: (key: string, value: unknown) => void;
+  };
+  openExternal: (target: string) => Promise<string>;
+  listApps: () => Promise<HostAppInfo[]>;
+  pick: (opts?: PluginPickOpts) => Promise<string[]>;
+  notify: (title: string, body?: string) => void;
 }
 
 export type PluginExecute = (
@@ -30,6 +50,7 @@ export interface LoadedPlugin {
   dirName?: string;
   error?: string;
   execute?: PluginExecute;
+  mainPath?: string;
 }
 
 export interface LlmTool {

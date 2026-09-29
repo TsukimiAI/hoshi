@@ -14,8 +14,14 @@
         </button>
         <nav id="fan-menu" class="fan-hidden" aria-hidden="true">
           <button id="fan-session-btn" class="fan-btn" type="button">会话</button>
+          <button id="fan-workbench-btn" class="fan-btn" type="button">工作台</button>
           <button id="fan-settings-btn" class="fan-btn" type="button">设置</button>
+          <div id="fan-plugin-actions"></div>
         </nav>
+        <div id="sound-bar" class="sound-bar" hidden>
+          <button id="sound-play" type="button" title="播放主题音效">▶</button>
+          <input id="sound-vol" type="range" min="0" max="100" value="80" title="音量" />
+        </div>
         <aside id="dock" class="dock-hidden" aria-hidden="true">
           <section id="session-panel" class="dock-panel hidden">
             <div id="session-header">

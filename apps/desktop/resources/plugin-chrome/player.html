@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>播放</title>
+  <style>
+    :root { --hoshi-bg: #191a3c; --hoshi-font: system-ui; --hoshi-dialog: #f3f1ff; --hoshi-menu: #ffffff; }
+    body { margin: 0; font: 13px/1.4 var(--hoshi-font); color: var(--hoshi-dialog); background: var(--hoshi-bg); padding: 12px; position: relative; min-height: 100%; }
+    h1 { font-size: 14px; margin: 0 0 10px; }
+    button { cursor: pointer; background: var(--hoshi-menu); }
+    audio { width: 100%; margin-top: 10px; }
+    #deco { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    #deco img, #deco span { position: absolute; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="deco"></div>
+  <h1 id="title">播放器</h1>
+  <button id="pick" type="button">选择文件</button>
+  <audio id="player" controls></audio>
+  <script src="player.js"></script>
+</body>
+</html>

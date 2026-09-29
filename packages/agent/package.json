@@ -10,11 +10,10 @@
   },
   "dependencies": {
     "@hoshi/shared": "workspace:*",
-    "pg": "^8.13.1",
+    "sqlite-vec": "^0.1.9",
     "ws": "^8.21.3"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.10",
     "@types/ws": "^8.18.1"
   }
 }

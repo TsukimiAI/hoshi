@@ -11,6 +11,7 @@ export interface ChatSettings {
   compactKeepRecent: number;
   referenceSites: string;
   memoryAutoWrite: boolean;
+  deepseekApiKey: string;
 }
 
 export interface PresentationSettings {
@@ -19,6 +20,7 @@ export interface PresentationSettings {
   maxAssistantBubbles: number;
   fadeDelayMs: number;
   panelIdleCloseMs: number;
+  soundVolume: number;
 }
 
 export interface PluginSettings {
@@ -49,18 +51,48 @@ export interface VoiceSettings {
   ttsEnabled: boolean;
 }
 
+export interface KnowledgeEmbeddingSettings {
+  provider: "dashscope" | "openai-compat" | "ollama";
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface KnowledgeSearchSettings {
+  topK: number;
+  minScore: number;
+  contextBudgetChars: number;
+  queryRewrite: "off" | "rewrite" | "multi";
+}
+
+export interface KnowledgeRerankSettings {
+  enabled: boolean;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface KnowledgeSettings {
+  enabled: boolean;
+  embedding: KnowledgeEmbeddingSettings;
+  search: KnowledgeSearchSettings;
+  rerank: KnowledgeRerankSettings;
+}
+
 export interface HoshiSettings {
   model: ModelSettings;
   chat: ChatSettings;
   presentation: PresentationSettings;
   plugins: PluginSettings;
   voice: VoiceSettings;
+  knowledge: KnowledgeSettings;
 }
 
 export interface SettingsEnvSeed {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
+  deepseekApiKey?: string;
 }
 
 export const DEFAULT_HOSHI_SETTINGS: HoshiSettings = {
@@ -75,14 +107,16 @@ export const DEFAULT_HOSHI_SETTINGS: HoshiSettings = {
     compactTriggerMsgCount: 80,
     compactKeepRecent: 24,
     referenceSites: "",
-    memoryAutoWrite: true
+    memoryAutoWrite: true,
+    deepseekApiKey: ""
   },
   presentation: {
     typeCharMs: 38,
     sentenceGapMs: 220,
     maxAssistantBubbles: 3,
     fadeDelayMs: 4000,
-    panelIdleCloseMs: 12000
+    panelIdleCloseMs: 12000,
+    soundVolume: 0.8
   },
   plugins: {
     enabled: [],
@@ -106,6 +140,27 @@ export const DEFAULT_HOSHI_SETTINGS: HoshiSettings = {
     whisperBin: "",
     whisperModelPath: "",
     ttsEnabled: true
+  },
+  knowledge: {
+    enabled: true,
+    embedding: {
+      provider: "dashscope",
+      baseUrl: "",
+      apiKey: "",
+      model: "text-embedding-v4"
+    },
+    search: {
+      topK: 5,
+      minScore: 0,
+      contextBudgetChars: 2400,
+      queryRewrite: "off"
+    },
+    rerank: {
+      enabled: false,
+      baseUrl: "",
+      apiKey: "",
+      model: "gte-rerank-v2"
+    }
   }
 };
 
@@ -136,6 +191,14 @@ function readPositiveInt(value: unknown, fallback: number): number {
     return fallback;
   }
   return Math.floor(n);
+}
+
+function readVolume(value: unknown, fallback: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  return Math.min(1, Math.max(0, n));
 }
 
 export function resolveCosyVoicePair(
@@ -174,13 +237,27 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
       baseUrl: env.baseUrl?.trim() || DEFAULT_HOSHI_SETTINGS.model.baseUrl,
       model: env.model?.trim() || DEFAULT_HOSHI_SETTINGS.model.model
     },
-    chat: { ...DEFAULT_HOSHI_SETTINGS.chat },
+    chat: {
+      ...DEFAULT_HOSHI_SETTINGS.chat,
+      deepseekApiKey: env.deepseekApiKey?.trim() || DEFAULT_HOSHI_SETTINGS.chat.deepseekApiKey
+    },
     presentation: { ...DEFAULT_HOSHI_SETTINGS.presentation },
     plugins: {
       enabled: [],
       configs: mergePluginConfigs({})
     },
-    voice: { ...DEFAULT_HOSHI_SETTINGS.voice }
+    voice: { ...DEFAULT_HOSHI_SETTINGS.voice },
+    knowledge: {
+      enabled: true,
+      embedding: {
+        provider: "dashscope",
+        baseUrl: env.baseUrl?.trim() || "",
+        apiKey: env.apiKey?.trim() || "",
+        model: "text-embedding-v4"
+      },
+      search: { ...DEFAULT_HOSHI_SETTINGS.knowledge.search },
+      rerank: { ...DEFAULT_HOSHI_SETTINGS.knowledge.rerank }
+    }
   };
 
   if (!isRecord(stored)) {
@@ -192,6 +269,7 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
   const presentation = isRecord(stored.presentation) ? stored.presentation : {};
   const plugins = isRecord(stored.plugins) ? stored.plugins : {};
   const voice = isRecord(stored.voice) ? stored.voice : {};
+  const knowledge = isRecord(stored.knowledge) ? stored.knowledge : {};
 
   const ttsBackendRaw = readString(voice.ttsBackend, seeded.voice.ttsBackend);
   const ttsBackend: TtsBackend = ttsBackendRaw === "gpt-sovits" ? "gpt-sovits" : "dashscope";
@@ -216,7 +294,9 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
       ),
       compactKeepRecent: readPositiveInt(chat.compactKeepRecent, seeded.chat.compactKeepRecent),
       referenceSites: readString(chat.referenceSites, seeded.chat.referenceSites),
-      memoryAutoWrite: readBoolean(chat.memoryAutoWrite, seeded.chat.memoryAutoWrite)
+      memoryAutoWrite: readBoolean(chat.memoryAutoWrite, seeded.chat.memoryAutoWrite),
+      deepseekApiKey:
+        readString(chat.deepseekApiKey, seeded.chat.deepseekApiKey).trim() || seeded.chat.deepseekApiKey
     },
     presentation: {
       typeCharMs: readPositiveInt(presentation.typeCharMs, seeded.presentation.typeCharMs),
@@ -229,7 +309,8 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
       panelIdleCloseMs: readPositiveInt(
         presentation.panelIdleCloseMs,
         seeded.presentation.panelIdleCloseMs
-      )
+      ),
+      soundVolume: readVolume(presentation.soundVolume, seeded.presentation.soundVolume)
     },
     plugins: {
       enabled: readEnabled(plugins.enabled),
@@ -258,6 +339,45 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
       whisperBin: readString(voice.whisperBin, seeded.voice.whisperBin).trim(),
       whisperModelPath: readString(voice.whisperModelPath, seeded.voice.whisperModelPath).trim(),
       ttsEnabled: readBoolean(voice.ttsEnabled, seeded.voice.ttsEnabled)
+    },
+    knowledge: resolveKnowledge(knowledge, seeded.knowledge)
+  };
+}
+
+function resolveQueryRewrite(value: unknown): "off" | "rewrite" | "multi" {
+  return value === "rewrite" || value === "multi" ? value : "off";
+}
+
+function resolveKnowledge(value: Record<string, unknown>, seeded: KnowledgeSettings): KnowledgeSettings {
+  const embedding = isRecord(value.embedding) ? value.embedding : {};
+  const search = isRecord(value.search) ? value.search : {};
+  const rerank = isRecord(value.rerank) ? value.rerank : {};
+  const providerRaw = readString(embedding.provider, seeded.embedding.provider);
+  const provider: KnowledgeEmbeddingSettings["provider"] =
+    providerRaw === "openai-compat" || providerRaw === "ollama" ? providerRaw : "dashscope";
+  const minScoreRaw = Number(search.minScore);
+  const minScore = Number.isFinite(minScoreRaw)
+    ? Math.min(1, Math.max(0, minScoreRaw))
+    : seeded.search.minScore;
+  return {
+    enabled: readBoolean(value.enabled, seeded.enabled),
+    embedding: {
+      provider,
+      baseUrl: readString(embedding.baseUrl, seeded.embedding.baseUrl).trim(),
+      apiKey: readString(embedding.apiKey, seeded.embedding.apiKey).trim(),
+      model: readString(embedding.model, seeded.embedding.model).trim() || seeded.embedding.model
+    },
+    search: {
+      topK: readPositiveInt(search.topK, seeded.search.topK),
+      minScore,
+      contextBudgetChars: readPositiveInt(search.contextBudgetChars, seeded.search.contextBudgetChars),
+      queryRewrite: resolveQueryRewrite(search.queryRewrite)
+    },
+    rerank: {
+      enabled: readBoolean(rerank.enabled, seeded.rerank.enabled),
+      baseUrl: readString(rerank.baseUrl, seeded.rerank.baseUrl).trim(),
+      apiKey: readString(rerank.apiKey, seeded.rerank.apiKey).trim(),
+      model: readString(rerank.model, seeded.rerank.model).trim() || seeded.rerank.model
     }
   };
 }

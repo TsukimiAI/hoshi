@@ -1,0 +1,20 @@
+[
+  {
+    "id": "everything",
+    "name": "Everything 样例",
+    "description": "官方示例连接器，用来验证本机 MCP 是否通。",
+    "hints": "需要本机已安装 Node（npx）。",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-everything"],
+    "env": {}
+  },
+  {
+    "id": "filesystem",
+    "name": "Filesystem",
+    "description": "读写指定目录。连接前把 args 最后一项改成实际路径。",
+    "hints": "需要本机 Node。路径为必填，勿指向整盘。",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/folder"],
+    "env": {}
+  }
+]

@@ -18,15 +18,30 @@ type Emotion =
   | "resentment"
   | "yandere";
 
+interface CitationItem {
+  chunkId: string;
+  docId: string;
+  documentTitle: string;
+  collectionId: string;
+  collectionName: string;
+  snippet: string;
+  score: number;
+}
+
 type AgentEvent =
   | { event: "emotion"; data: { emotion: Emotion } }
   | { event: "sentence"; data: { text: string; emotion: Emotion; index: number } }
   | { event: "done"; data: { ok: true } }
-  | { event: "error"; data: { message: string } };
+  | { event: "error"; data: { message: string } }
+  | { event: "citation"; data: { callId: string; citations: CitationItem[] } }
+  | { event: "canvas"; data: { items: unknown[] } }
+  | { event: "turn"; data: { turnId: string; sessionId: string; userMessageId: string } }
+  | { event: "progress"; data: { phase: string; name?: string; detail?: string; ok?: boolean; elapsedMs?: number } };
 
 interface SessionItem {
   id: string;
   title: string;
+  kind?: "chat" | "desk";
   createdAt: string;
   updatedAt: string;
   lastMessageAt: string | null;
@@ -48,6 +63,14 @@ interface SessionMessagesResponse {
   messages: SessionMessage[];
 }
 
+function applyHoshiTheme(tokens?: { bg?: string; font?: string; dialog?: string; menu?: string } | null): void {
+  const root = document.documentElement;
+  root.style.setProperty("--hoshi-bg", tokens?.bg || "#f4f6fb");
+  root.style.setProperty("--hoshi-font", tokens?.font || '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
+  root.style.setProperty("--hoshi-dialog", tokens?.dialog || "#ffffff");
+  root.style.setProperty("--hoshi-menu", tokens?.menu || "#ffffff");
+}
+
 interface RendererConfig {
   agentBaseUrl: string;
   agentToken: string;
@@ -62,6 +85,7 @@ interface PresentationConfig {
   maxAssistantBubbles: number;
   fadeDelayMs: number;
   panelIdleCloseMs: number;
+  soundVolume: number;
 }
 
 interface HoshiSettings {
@@ -77,19 +101,40 @@ interface HoshiSettings {
 
 interface HoshiApi {
   getConfig: () => Promise<RendererConfig>;
+  getTheme?: () => Promise<{
+    id: string;
+    tokens: { bg: string; font: string; dialog: string; menu: string; sound: string };
+  } | null>;
+  onThemePreview?: (
+    handler: (tokens: { bg: string; font: string; dialog: string; menu: string } | null) => void
+  ) => void;
   getSpriteData: (emotion: Emotion) => Promise<string>;
+  getThemeSound?: () => Promise<string>;
+  listPluginActions: () => Promise<
+    { pluginId: string; id: string; label: string; window: string; kind?: "panel" }[]
+  >;
+  openPluginWindow: (pluginId: string, windowId: string) => Promise<void>;
+  openPluginPanel: (pluginId: string) => Promise<void>;
+  onPluginPanel: (handler: (open: boolean, width: number) => void) => void;
   setIgnoreMouseEvents: (ignore: boolean) => Promise<void>;
   moveWindowBy: (dx: number, dy: number) => Promise<void>;
   openSettings: () => Promise<void>;
+  openWorkbench: () => Promise<void>;
   getSettings: () => Promise<HoshiSettings>;
   saveSettings: (settings: HoshiSettings) => Promise<HoshiSettings>;
   onSettingsUpdated: (handler: (settings: HoshiSettings) => void) => void;
   chat: (
-    payload: { message: string; sessionId: string },
+    payload: {
+      message: string;
+      sessionId: string;
+      workspace?: "desk";
+      images?: Array<{ mime: string; data: string }>;
+    },
     onEvent: (event: AgentEvent) => void
   ) => Promise<void>;
-  listSessions: () => Promise<SessionItem[]>;
-  createSession: (title?: string) => Promise<SessionItem>;
+  abortChat?: () => void;
+  listSessions: (kind?: "chat" | "desk") => Promise<SessionItem[]>;
+  createSession: (title?: string, kind?: "chat" | "desk") => Promise<SessionItem>;
   deleteSession: (sessionId: string) => Promise<void>;
   listSessionMessages: (sessionId: string) => Promise<SessionMessagesResponse>;
   transcribe: (audioWavBase64: string, sessionId?: string) => Promise<string>;
@@ -106,6 +151,7 @@ interface HoshiApi {
   speakText: (text: string) => void;
   finishSpeak: () => void;
   stopSpeak: () => void;
+  rememberKbChunk?: (chunkId: string) => Promise<{ id: string }>;
 }
 
 interface RendererState {
@@ -166,6 +212,7 @@ function consumeEvent(
     onEmotion: (emotion: Emotion) => void;
     onDone: () => void;
     onError: (message: string) => void;
+    onCitation?: (citations: CitationItem[]) => void;
   }
 ): void {
   if (event.event === "sentence") {
@@ -178,6 +225,19 @@ function consumeEvent(
   }
   if (event.event === "done") {
     handlers.onDone();
+    return;
+  }
+  if (event.event === "citation") {
+    handlers.onCitation?.(event.data.citations);
+    return;
+  }
+  if (event.event === "canvas") {
+    return;
+  }
+  if (event.event === "turn") {
+    return;
+  }
+  if (event.event === "progress") {
     return;
   }
   handlers.onError(event.data.message);

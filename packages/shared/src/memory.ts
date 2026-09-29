@@ -9,6 +9,15 @@ export const MEMORY_KINDS: MemoryKind[] = [
   "other"
 ];
 
+export interface MemoryMeta {
+  /** 摘录来源类型；目前仅知识库摘录会带 meta。 */
+  source?: "knowledge";
+  chunkId?: string;
+  documentId?: string;
+  documentTitle?: string;
+  collectionId?: string;
+}
+
 export interface MemoryItem {
   id: string;
   text: string;
@@ -19,6 +28,7 @@ export interface MemoryItem {
   createdAt: string;
   updatedAt: string;
   ackedAt: string | null;
+  meta?: MemoryMeta | null;
 }
 
 export interface MemoryListResponse {

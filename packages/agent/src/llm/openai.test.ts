@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseUsage } from "@hoshi/shared";
-import { buildChatCompletionBody } from "./openai";
+import { buildChatCompletionBody, isAbortTimeout } from "./openai";
 
 describe("buildChatCompletionBody", () => {
   it("始终带 enable_search", () => {
@@ -10,7 +10,10 @@ describe("buildChatCompletionBody", () => {
       model: "qwen",
       stream: true,
       enable_search: true,
-      extra_body: { enable_search: true },
+      extra_body: {
+        enable_search: true,
+        search_options: { forced_search: true, enable_source: true }
+      },
       stream_options: { include_usage: true }
     });
   });
@@ -62,5 +65,14 @@ describe("parseUsage", () => {
   it("无 usage 字段不伪造", () => {
     expect(parseUsage(undefined)).toBeUndefined();
     expect(parseUsage({})).toBeUndefined();
+  });
+});
+
+describe("isAbortTimeout", () => {
+  it("识别 Node TimeoutError 英文", () => {
+    const error = new Error("The operation was aborted due to timeout");
+    error.name = "TimeoutError";
+    expect(isAbortTimeout(error)).toBe(true);
+    expect(isAbortTimeout(new Error("boom"))).toBe(false);
   });
 });

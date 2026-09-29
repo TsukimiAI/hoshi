@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>星奈工作台</title>
+    <link rel="stylesheet" href="./workbench.css" />
+  </head>
+  <body>
+    <div id="shell">
+      <nav id="rail">
+        <button id="rail-desk" class="rail-btn" type="button" data-rail="desk">
+          <span class="rail-ico">🖼</span><span class="rail-label">画布</span>
+        </button>
+        <button id="rail-skin" class="rail-btn active" type="button" data-rail="skin">
+          <span class="rail-ico">🎨</span><span class="rail-label">模板</span>
+        </button>
+        <button id="rail-shop" class="rail-btn" type="button" data-rail="shop">
+          <span class="rail-ico">🛍️</span><span class="rail-label">工坊</span>
+        </button>
+        <button id="rail-connect" class="rail-btn" type="button" data-rail="connect">
+          <span class="rail-ico">🔌</span><span class="rail-label">连接</span>
+        </button>
+        <button id="rail-kb" class="rail-btn" type="button" data-rail="kb">
+          <span class="rail-ico">📚</span><span class="rail-label">知识库</span>
+        </button>
+      </nav>
+      <aside id="sidebar">
+        <div id="side-head">
+          <span id="side-title">模板</span>
+          <button id="kb-new-btn" type="button" hidden>＋ 新建</button>
+          <button id="desk-new-btn" type="button" hidden>＋ 会话</button>
+        </div>
+        <div id="kb-new-row" hidden>
+          <input id="kb-new-input" type="text" placeholder="知识库名称" />
+          <button id="kb-new-ok" type="button">确定</button>
+        </div>
+        <ul id="plugin-list"></ul>
+      </aside>
+      <section id="main">
+        <header id="main-head">
+          <button id="back-btn" type="button" hidden>← 返回</button>
+          <span id="current-id">未选择</span>
+          <p id="wb-note" class="editor-hint" hidden></p>
+          <button id="new-btn" type="button">新建</button>
+          <button id="publish-btn" type="button" disabled>上线</button>
+        </header>
+        <form id="skin-form" hidden>
+          <h2 class="ed-title">基础信息</h2>
+          <p class="editor-hint">面板/启动器只填元数据；界面与摆位在下方画布。</p>
+          <div class="form-grid">
+            <label>名称<input id="skin-name" type="text" /></label>
+            <label>菜单<input id="skin-label" type="text" /></label>
+            <label>标题<input id="skin-title" type="text" /></label>
+            <label class="full">说明<input id="skin-desc" type="text" placeholder="工坊卡上的说明" /></label>
+            <label id="skin-multiple-row"><input id="skin-multiple" type="checkbox" /> 多选</label>
+            <label id="skin-filter-name-row">筛选名<input id="skin-filter-name" type="text" /></label>
+            <label id="skin-filter-ext-row">扩展名<input id="skin-filter-ext" type="text" placeholder="mp3,m4a" /></label>
+          </div>
+          <button id="skin-save" type="submit">保存</button>
+        </form>
+        <div id="gallery" hidden></div>
+        <form id="theme-ed" hidden>
+          <h2 class="ed-title">基本信息</h2>
+          <div class="theme-tokens">
+            <label>名称<input id="theme-name" type="text" placeholder="主题名称" /></label>
+            <label>说明<input id="theme-desc" type="text" placeholder="工坊卡上的说明" /></label>
+          </div>
+          <h2 class="ed-title">颜色与字体</h2>
+          <p class="editor-hint">换皮不改能力：颜色进变量、音效走文件、缺字段回退默认人格。</p>
+          <div class="theme-tokens">
+            <label>背景<input id="theme-bg" type="color" /></label>
+            <label>对话框<input id="theme-dialog" type="color" /></label>
+            <label>菜单<input id="theme-menu" type="color" /></label>
+            <label>字体<input id="theme-font" type="text" placeholder="字体族，如 -apple-system, sans-serif" /></label>
+            <label class="theme-sound-row">音效
+              <input id="theme-sound" type="text" readonly placeholder="未设置" />
+              <button id="theme-sound-pick" type="button">上传</button>
+              <button id="theme-sound-clear" type="button">清除</button>
+            </label>
+            <audio id="theme-sound-preview" controls hidden></audio>
+          </div>
+          <h2 class="ed-title">立绘</h2>
+          <p class="editor-hint">按表情上传，留空则用默认人格立绘。</p>
+          <div id="theme-sprites"></div>
+          <div class="ed-actions">
+            <button id="theme-preview" type="button">预览到宠物</button>
+            <button id="theme-restore" type="button">还原</button>
+            <button id="theme-save" type="submit">保存</button>
+          </div>
+          <input id="theme-file" type="file" accept="image/png,image/webp,image/jpeg" hidden />
+          <input id="theme-sound-file" type="file" accept="audio/*,.mp3,.wav,.m4a,.ogg" hidden />
+        </form>
+        <div id="canvas-ed" hidden>
+          <h2 class="ed-title">画布</h2>
+          <div id="canvas-tools">
+            <button id="canvas-text" type="button">文字</button>
+            <button id="canvas-image" type="button">图片</button>
+            <button id="canvas-deco" type="button">装饰</button>
+            <button id="canvas-delete" type="button" disabled>删除</button>
+            <button id="canvas-save" type="button">保存</button>
+          </div>
+          <p class="editor-hint">拖拽摆位；无布局时宿主回退默认界面。</p>
+          <div id="canvas-board"></div>
+          <input id="canvas-file" type="file" accept="image/png,image/webp,image/jpeg" hidden />
+        </div>
+        <p id="shop-hint" hidden>已上线模组：卡面预览、说明、开关、卸载。工具请用连接页。</p>
+        <div id="connect-panel" hidden>
+          <div id="connect-head">
+            <span>连接器</span>
+            <button id="mcp-reveal-btn" type="button">打开配置文件</button>
+          </div>
+          <p class="editor-hint">用模版或表单直连外部 MCP。环境变量明文保存在本机 mcp.json，不要提交到仓库。</p>
+          <p id="mcp-note" class="editor-hint"></p>
+          <ul id="mcp-list"></ul>
+          <h2 class="ed-title">连接模版</h2>
+          <div id="mcp-templates"></div>
+          <h2 class="ed-title">添加连接器</h2>
+          <form id="mcp-form">
+            <div class="form-grid">
+              <label>id<input id="mcp-id" type="text" placeholder="字母数字 _ -" /></label>
+              <label>command<input id="mcp-command" type="text" placeholder="npx" /></label>
+              <label class="full">args（每行一项）<textarea id="mcp-args" rows="3" placeholder="-y&#10;@modelcontextprotocol/server-everything"></textarea></label>
+              <label class="full">env（KEY=value，明文）<textarea id="mcp-env" rows="3" placeholder="API_KEY="></textarea></label>
+            </div>
+            <p id="mcp-form-err"></p>
+            <div class="ed-actions">
+              <button id="mcp-connect-btn" type="submit">连接</button>
+              <button id="mcp-probe-btn" type="button">试连</button>
+            </div>
+            <pre id="mcp-probe-out" hidden></pre>
+          </form>
+        </div>
+        <div id="desk-panel" hidden>
+          <div id="desk-stage">
+            <div id="desk-main">
+              <div id="desk-board"></div>
+              <form id="desk-chat">
+                <div id="desk-attach-row" hidden></div>
+                <input id="desk-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden />
+                <button id="desk-attach-btn" type="button" title="添加图片">图片</button>
+                <input id="desk-input" type="text" placeholder="输入任何问题或指令…" autocomplete="off" />
+                <button id="desk-stop" type="button" hidden title="停止">停止</button>
+                <button id="desk-send" type="submit" title="发送">↑</button>
+              </form>
+              <p id="desk-status" class="editor-hint"></p>
+            </div>
+            <aside id="desk-activity">
+              <div id="desk-activity-head">
+                <span>动态</span>
+                <span>
+                  <button id="desk-live-btn" type="button">当前</button>
+                  <button id="desk-reset-btn" type="button">重置</button>
+                </span>
+              </div>
+              <div id="desk-activity-list"></div>
+            </aside>
+          </div>
+        </div>
+        <div id="kb-panel" hidden>
+          <div id="kb-head">
+            <span id="kb-collection-name">未选择知识库</span>
+            <span>
+              <button id="kb-refresh-btn" type="button">刷新</button>
+              <button id="kb-reindex-btn" type="button">重建索引</button>
+              <button id="kb-export-btn" type="button">导出备份</button>
+            </span>
+          </div>
+          <div id="kb-cap-hint" class="editor-hint" hidden></div>
+          <div id="kb-status" class="editor-hint"></div>
+          <ul id="kb-doc-list"></ul>
+          <form id="kb-import-form">
+            <div class="form-grid">
+              <label>标题<input id="kb-import-title" type="text" placeholder="文档标题" /></label>
+              <label>链接<input id="kb-url" type="text" placeholder="https://…（导入网页内容）" /></label>
+            </div>
+            <textarea id="kb-import-text" rows="4" placeholder="粘贴文本内容（md / txt）"></textarea>
+            <div>
+              <button id="kb-import-btn" type="submit">导入到当前知识库</button>
+              <button id="kb-file-btn" type="button">从文件导入（PDF / Word / md / txt / html）</button>
+              <button id="kb-url-btn" type="button">导入链接</button>
+              <input id="kb-file" type="file" accept=".pdf,.docx,.md,.txt,.markdown,.html,.htm" hidden />
+            </div>
+          </form>
+          <div id="kb-search-box">
+            <input id="kb-search-input" type="text" placeholder="测试检索：输入问题…" />
+            <button id="kb-search-btn" type="button">检索</button>
+            <div id="kb-search-results"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div id="create-mask" hidden>
+      <form id="create-box">
+        <p id="create-title">新建</p>
+        <input id="new-id" type="text" />
+        <div id="create-kind">
+          <label data-kind="theme"><input type="radio" name="new-kind" value="theme" checked /><span>主题</span><small>theme</small></label>
+          <label data-kind="panel"><input type="radio" name="new-kind" value="panel" /><span>播放器</span><small>panel</small></label>
+          <label data-kind="launcher"><input type="radio" name="new-kind" value="launcher" /><span>启动器</span><small>launcher</small></label>
+        </div>
+        <p id="create-err"></p>
+        <div id="create-actions">
+          <button id="new-cancel" type="button">取消</button>
+          <button id="new-ok" type="submit">创建</button>
+        </div>
+      </form>
+    </div>
+    <div id="preview-mask" hidden>
+      <div id="preview-box">
+        <div id="preview-head">
+          <span id="preview-title">预览</span>
+          <button id="preview-close" type="button">关闭</button>
+        </div>
+        <div id="preview-body"></div>
+      </div>
+    </div>
+    <script src="./pdf.min.js"></script>
+    <script src="./pdfLayout.js"></script>
+    <script src="./workbench.js"></script>
+  </body>
+</html>

@@ -8,9 +8,13 @@ export interface OpenAiCompatConfig {
   model: string;
 }
 
+export type LlmContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface LlmMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | null | LlmContentPart[];
   tool_calls?: Array<{
     id: string;
     type: "function";
@@ -32,7 +36,10 @@ export function buildChatCompletionBody(
   };
   if (enableSearch) {
     body.enable_search = true;
-    body.extra_body = { enable_search: true };
+    body.extra_body = {
+      enable_search: true,
+      search_options: { forced_search: true, enable_source: true }
+    };
   }
   if (options.stream) {
     body.stream_options = { include_usage: true };
@@ -70,7 +77,76 @@ export function toLlmMessages(messages: ChatMessage[]): LlmMessage[] {
   }));
 }
 
-function mergeTimeoutSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+const IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+export function sanitizeChatImages(
+  images: Array<{ mime: string; data: string }> | undefined,
+  maxCount = 4
+): Array<{ mime: string; data: string }> {
+  if (!images?.length) {
+    return [];
+  }
+  const out: Array<{ mime: string; data: string }> = [];
+  for (const image of images) {
+    const mime = image.mime.trim().toLowerCase();
+    const data = image.data.replace(/\s+/g, "");
+    if (!IMAGE_MIME.has(mime) || !data || data.length > 1_800_000) {
+      continue;
+    }
+    out.push({ mime, data });
+    if (out.length >= maxCount) {
+      break;
+    }
+  }
+  return out;
+}
+
+export function userContentWithImages(
+  text: string,
+  images: Array<{ mime: string; data: string }>
+): string | LlmContentPart[] {
+  if (images.length === 0) {
+    return text;
+  }
+  const parts: LlmContentPart[] = [{ type: "text", text }];
+  for (const image of images) {
+    parts.push({
+      type: "image_url",
+      image_url: { url: `data:${image.mime};base64,${image.data}` }
+    });
+  }
+  return parts;
+}
+
+export function isAbortTimeout(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const name = "name" in error ? String((error as { name?: string }).name) : "";
+  const message = "message" in error ? String((error as { message?: string }).message) : "";
+  return (
+    name === "TimeoutError" ||
+    name === "AbortError" ||
+    /aborted due to timeout/i.test(message) ||
+    /^the operation was aborted/i.test(message)
+  );
+}
+
+async function fetchLlm(input: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    if (isAbortTimeout(error)) {
+      throw new Error("模型请求超时");
+    }
+    throw error;
+  }
+}
+
+export function mergeTimeoutSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  if (timeoutMs <= 0) {
+    return signal ?? new AbortController().signal;
+  }
   const timeout = AbortSignal.timeout(timeoutMs);
   if (!signal) {
     return timeout;
@@ -147,7 +223,7 @@ export class OpenAiCompatClient {
     if (options?.timeoutMs && options.timeoutMs > 0) {
       init.signal = AbortSignal.timeout(options.timeoutMs);
     }
-    const response = await fetch(
+    const response = await fetchLlm(
       `${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`,
       init
     );
@@ -158,6 +234,35 @@ export class OpenAiCompatClient {
     const result = parseCompleteChatResponse((await response.json()) as unknown);
     this.capture(result.usage, options);
     return result;
+  }
+
+  async embed(
+    texts: string[],
+    options?: { timeoutMs?: number; model?: string; apiKey?: string; baseUrl?: string }
+  ): Promise<number[][]> {
+    const model = options?.model?.trim() || this.config.model;
+    const apiKey = options?.apiKey?.trim() || this.config.apiKey;
+    const baseUrl = (options?.baseUrl?.trim() || this.config.baseUrl).replace(/\/$/, "");
+    const init: RequestInit = {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ model, input: texts })
+    };
+    if (options?.timeoutMs && options.timeoutMs > 0) {
+      init.signal = AbortSignal.timeout(options.timeoutMs);
+    }
+    const response = await fetchLlm(`${baseUrl}/embeddings`, init);
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Embedding request failed: ${response.status} ${text.slice(0, 200)}`);
+    }
+    const json = (await response.json()) as { data?: Array<{ embedding?: number[] }>; usage?: unknown };
+    this.capture(parseUsage(json.usage), { purpose: "embed" }, model);
+    const data = Array.isArray(json.data) ? json.data : [];
+    return data.map((item) => (Array.isArray(item.embedding) ? item.embedding : []));
   }
 
   async transcribeWav(
@@ -177,7 +282,7 @@ export class OpenAiCompatClient {
     const timeoutMs = options?.timeoutMs ?? 20000;
     const apiKey = options?.apiKey?.trim() || this.config.apiKey;
     const baseUrl = (options?.baseUrl?.trim() || this.config.baseUrl).replace(/\/$/, "");
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await fetchLlm(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -238,9 +343,9 @@ export class OpenAiCompatClient {
   async *streamChat(
     messages: LlmMessage[],
     signal?: AbortSignal,
-    options?: Pick<LlmCallOptions, "purpose" | "sessionId">
+    options?: Pick<LlmCallOptions, "purpose" | "sessionId" | "enableSearch">
   ): AsyncGenerator<StreamChatPart> {
-    const response = await fetch(
+    const response = await fetchLlm(
       `${this.config.baseUrl.replace(/\/$/, "")}/chat/completions`,
       {
         method: "POST",
@@ -249,7 +354,10 @@ export class OpenAiCompatClient {
           "Content-Type": "application/json"
         },
         body: JSON.stringify(
-          buildChatCompletionBody(this.config.model, messages, { stream: true })
+          buildChatCompletionBody(this.config.model, messages, {
+            stream: true,
+            enableSearch: options?.enableSearch
+          })
         ),
         signal
       }

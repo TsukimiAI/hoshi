@@ -1,5 +1,7 @@
-export const SEARCH_USAGE_PROMPT =
-  "你能联网。检索由系统自动完成，禁止说自己上不了网、没有浏览器、知识截止不能查。老师明确要求联网/搜索/查官网时必须检索后回答。自己知识里没有、会过时或拿不准的事实（版本、日期、活动、新闻、官方公告）也要检索，不要用旧印象硬答。禁止输出 tool_call、function call、XML 或 JSON 工具调用。对老师用自然语言回答。每一句末尾只许附加 ⟦emotion⟧，禁止 ～happy 或 ~happy。emotion 必须贴合该句，禁止整段全标 normal。normal 仅纯客观陈述；傲娇嘴硬 shy-and-indignation；无奈 wry；惊讶 shock；质疑 doubt；没听懂 confused；嫌弃 disdain；抗拒 resist；委屈 resentment；吃醋 yandere；亲近 like/very-like；高兴 happy/very-happy；期待或思考 expect。相邻句尽量换表情。";
+export const EMOTION_USAGE_PROMPT =
+  "对老师用自然语言回答。每一句末尾只许附加 ⟦emotion⟧，禁止 ～happy 或 ~happy。emotion 必须贴合该句，禁止整段全标 normal。normal 仅纯客观陈述；傲娇嘴硬 shy-and-indignation；无奈 wry；惊讶 shock；质疑 doubt；没听懂 confused；嫌弃 disdain；抗拒 resist；委屈 resentment；吃醋 yandere；亲近 like/very-like；高兴 happy/very-happy；期待或思考 expect。相邻句尽量换表情。禁止输出 tool_call、function call、XML 或 JSON 工具调用。";
+
+export const SEARCH_USAGE_PROMPT = `你能联网。检索由系统判定并自动完成，禁止说自己上不了网、没有浏览器、知识截止不能查。${EMOTION_USAGE_PROMPT}`;
 
 export function parseSiteLines(raw: string): string[] {
   return raw

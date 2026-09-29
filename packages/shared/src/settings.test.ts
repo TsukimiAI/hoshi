@@ -25,6 +25,7 @@ describe("resolveHoshiSettings", () => {
     expect(resolved.chat.compactKeepRecent).toBe(24);
     expect(resolved.chat.referenceSites).toBe("");
     expect(resolved.chat.memoryAutoWrite).toBe(true);
+    expect(resolved.chat.deepseekApiKey).toBe("");
     expect(resolved.plugins.enabled).toEqual([]);
     expect(resolved.plugins.configs.web_search).toBeUndefined();
   });
@@ -99,6 +100,9 @@ describe("resolveHoshiSettings", () => {
   it("可关闭记忆自动写入", () => {
     expect(resolveHoshiSettings({ chat: { memoryAutoWrite: false } }).chat.memoryAutoWrite).toBe(
       false
+    );
+    expect(resolveHoshiSettings(null, { deepseekApiKey: "from-env" }).chat.deepseekApiKey).toBe(
+      "from-env"
     );
   });
 });

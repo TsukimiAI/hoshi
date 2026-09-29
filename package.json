@@ -11,12 +11,18 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "eval:memory": "HOSHI_MEMORY_EVAL=1 vitest run packages/agent/src/memory/eval/live.test.ts",
+    "eval:kb": "vitest run packages/agent/src/knowledge/eval.test.ts",
+    "eval:kb-ragas": "HOSHI_KB_EVAL=1 vitest run packages/agent/src/knowledge/ragas.live.test.ts",
     "coverage": "vitest run --coverage"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",
-    "@vitest/coverage-v8": "^2.1.1",
+    "@vitest/coverage-v8": "^4.0.0",
     "typescript": "^5.5.3",
-    "vitest": "^2.1.1"
+    "vite": "^6.0.0",
+    "vitest": "^4.0.0"
+  },
+  "dependencies": {
+    "mammoth": "^1.12.3"
   }
 }

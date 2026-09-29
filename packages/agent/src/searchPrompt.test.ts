@@ -22,6 +22,7 @@ describe("SEARCH_USAGE_PROMPT", () => {
     expect(SEARCH_USAGE_PROMPT).toContain("tool_call");
     expect(SEARCH_USAGE_PROMPT).toContain("～happy");
     expect(SEARCH_USAGE_PROMPT).toContain("~happy");
+    expect(SEARCH_USAGE_PROMPT).toContain("系统判定");
   });
 });
 

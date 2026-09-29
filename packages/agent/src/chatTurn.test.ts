@@ -62,7 +62,8 @@ describe("runSessionChat abort", () => {
         compactTriggerMsgCount: 80,
         compactKeepRecent: 24,
         referenceSites: "",
-        memoryAutoWrite: false
+        memoryAutoWrite: false,
+        deepseekApiKey: ""
       },
       sessionId: "s",
       message: "hi",
@@ -100,7 +101,8 @@ describe("runSessionChat abort", () => {
         compactTriggerMsgCount: 80,
         compactKeepRecent: 24,
         referenceSites: "",
-        memoryAutoWrite: false
+        memoryAutoWrite: false,
+        deepseekApiKey: ""
       },
       sessionId: "s",
       message: "hi",
@@ -110,5 +112,45 @@ describe("runSessionChat abort", () => {
       // drain
     }
     expect(deleted).toEqual([]);
+  });
+
+  it("done 前发出 canvas 快照", async () => {
+    const events: Array<{ event: string }> = [];
+    const runtime = {
+      async *chat() {
+        yield { event: "sentence" as const, data: { text: "好。", emotion: "normal" as const, index: 0 } };
+        yield { event: "done" as const, data: { ok: true as const } };
+      }
+    };
+    for await (const event of runSessionChat({
+      repo: repoStub([]) as never,
+      memoryRepo: {
+        listUnacked: async () => [],
+        listActive: async () => [],
+        markAcked: async () => undefined
+      } as never,
+      runtime: runtime as never,
+      llm: new SilentLlm() as never,
+      chatSettings: {
+        contextBudget: 8000,
+        compactTriggerToken: 6000,
+        compactTriggerMsgCount: 80,
+        compactKeepRecent: 24,
+        referenceSites: "",
+        memoryAutoWrite: false,
+        deepseekApiKey: ""
+      },
+      sessionId: "s",
+      message: "hi",
+      history: [],
+      workspace: "desk",
+      commitCanvas: () => ({ items: [] })
+    })) {
+      events.push(event);
+    }
+    const names = events.map((item) => item.event);
+    expect(names[0]).toBe("turn");
+    expect(names.indexOf("canvas")).toBeGreaterThan(-1);
+    expect(names.indexOf("canvas")).toBeLessThan(names.indexOf("done"));
   });
 });

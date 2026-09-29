@@ -1,0 +1,26 @@
+{
+  "id": "launcher_template",
+  "kind": "native",
+  "template": "launcher",
+  "name": "启动器",
+  "description": "宿主启动器，只填 slots.title",
+  "version": "0.1.0",
+  "tool": {
+    "name": "launcher_template",
+    "description": "list 列出应用，open 用名字打开",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "enum": ["ping", "list", "open"] },
+        "app": { "type": "string" }
+      },
+      "required": ["action"]
+    }
+  },
+  "slots": {
+    "title": "启动器"
+  },
+  "ui": {
+    "menu": { "label": "启动" }
+  }
+}

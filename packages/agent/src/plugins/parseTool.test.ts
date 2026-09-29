@@ -46,6 +46,27 @@ describe("parseCompleteChatResponse", () => {
       usage: { promptTokens: 8, completionTokens: 2, totalTokens: 10, cachedTokens: 0 }
     });
   });
+
+  it("拼接数组 content 与 search_info", () => {
+    expect(
+      parseCompleteChatResponse({
+        choices: [
+          {
+            message: {
+              content: [{ type: "text", text: "上海最高 28" }]
+            }
+          }
+        ],
+        search_info: {
+          search_results: [{ title: "天气", url: "https://example.com/w" }]
+        }
+      })
+    ).toEqual({
+      content: "上海最高 28",
+      toolCalls: [],
+      searchNotes: "天气 https://example.com/w"
+    });
+  });
 });
 
 describe("parseToolArgs", () => {

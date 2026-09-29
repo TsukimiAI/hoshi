@@ -7,6 +7,7 @@ type FormSettings = {
     compactKeepRecent: number;
     referenceSites: string;
     memoryAutoWrite: boolean;
+    deepseekApiKey: string;
   };
   presentation: {
     typeCharMs: number;
@@ -14,6 +15,7 @@ type FormSettings = {
     maxAssistantBubbles: number;
     fadeDelayMs: number;
     panelIdleCloseMs: number;
+    soundVolume: number;
   };
   plugins: {
     enabled: string[];
@@ -37,6 +39,17 @@ type FormSettings = {
     whisperBin: string;
     whisperModelPath: string;
     ttsEnabled: boolean;
+  };
+  knowledge: {
+    enabled: boolean;
+    embedding: {
+      provider: "dashscope" | "openai-compat" | "ollama";
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+    };
+    search: { topK: number; minScore: number; contextBudgetChars: number; queryRewrite: "off" | "rewrite" | "multi" };
+    rerank: { enabled: boolean; baseUrl: string; apiKey: string; model: string };
   };
 };
 
@@ -67,6 +80,7 @@ type MemoryItem = {
   sourceSessionId: string | null;
   createdAt: string;
   updatedAt: string;
+  meta?: { source?: string; documentTitle?: string } | null;
 };
 
 type UsageTotals = {
@@ -98,6 +112,10 @@ type UsageSummary = {
 interface SettingsApi {
   getSettings: () => Promise<FormSettings>;
   saveSettings: (settings: FormSettings) => Promise<FormSettings>;
+  onSettingsUpdated: (handler: (settings: FormSettings) => void) => void;
+  getTheme?: () => Promise<{
+    tokens: { bg: string; font: string; dialog: string; menu: string; sound: string };
+  } | null>;
   listPlugins: () => Promise<{ plugins: PluginMarketItem[] }>;
   openPluginsDir: () => Promise<void>;
   listMemories: () => Promise<{ memories: MemoryItem[] }>;
@@ -246,16 +264,22 @@ function renderMemories(memories: MemoryItem[], archived: MemoryItem[]): void {
       }
       const cards = items
         .map(
-          (item) => `<article class="memory-card" data-memory-id="${escapeHtml(item.id)}">
+          (item) => {
+            const source = item.meta?.source === "knowledge" && item.meta.documentTitle
+              ? `<div class="memory-source">📄 来自《${escapeHtml(item.meta.documentTitle)}》</div>`
+              : "";
+            return `<article class="memory-card" data-memory-id="${escapeHtml(item.id)}">
         <div class="memory-card-body">
           <div class="memory-kind">${escapeHtml(memoryKindLabel(item.kind))}</div>
           <input data-memory-text="${escapeHtml(item.id)}" value="${escapeHtml(item.text)}" />
+          ${source}
         </div>
         <div class="memory-card-actions">
           <button type="button" data-memory-save="${escapeHtml(item.id)}">保存</button>
           <button type="button" data-memory-delete="${escapeHtml(item.id)}">删除</button>
         </div>
-      </article>`
+      </article>`;
+          }
         )
         .join("");
       return `<h2 class="memory-group">${escapeHtml(memoryKindLabel(kind))}</h2>${cards}`;
@@ -367,6 +391,12 @@ function readAsrBackend(): FormSettings["voice"]["asrBackend"] {
   return checked?.value === "whisper" ? "whisper" : "dashscope";
 }
 
+function kbQueryRewriteValue(): "off" | "rewrite" | "multi" {
+  const el = document.getElementById("kbQueryRewrite") as HTMLSelectElement | null;
+  const value = el?.value;
+  return value === "rewrite" || value === "multi" ? value : "off";
+}
+
 function syncVoicePanels(): void {
   const gsv = readTtsBackend() === "gpt-sovits";
   document.getElementById("dashscope-fields")?.classList.toggle("hidden", gsv);
@@ -402,6 +432,7 @@ async function bootstrapSettings() {
     setText("compactTriggerMsgCount", settings.chat.compactTriggerMsgCount);
     setText("compactKeepRecent", settings.chat.compactKeepRecent);
     setText("referenceSites", settings.chat.referenceSites);
+    setText("deepseekApiKey", settings.chat.deepseekApiKey);
     const autoWrite = document.getElementById("memoryAutoWrite") as HTMLInputElement | null;
     if (autoWrite) {
       autoWrite.checked = settings.chat.memoryAutoWrite === true;
@@ -445,6 +476,21 @@ async function bootstrapSettings() {
       radio.checked = true;
     }
     syncVoicePanels();
+    setText("kbEmbeddingModel", settings.knowledge.embedding.model);
+    setText("kbEmbeddingBaseUrl", settings.knowledge.embedding.baseUrl);
+    setText("kbEmbeddingApiKey", settings.knowledge.embedding.apiKey);
+    setText("kbTopK", settings.knowledge.search.topK);
+    setText("kbMinScore", settings.knowledge.search.minScore);
+    setText("kbQueryRewrite", settings.knowledge.search.queryRewrite);
+    setText("kbRerankModel", settings.knowledge.rerank.model);
+    const kbEnabled = document.getElementById("kbEnabled") as HTMLInputElement | null;
+    if (kbEnabled) {
+      kbEnabled.checked = settings.knowledge.enabled === true;
+    }
+    const kbRerankEnabled = document.getElementById("kbRerankEnabled") as HTMLInputElement | null;
+    if (kbRerankEnabled) {
+      kbRerankEnabled.checked = settings.knowledge.rerank.enabled === true;
+    }
   };
 
   const loadPlugins = async (): Promise<void> => {
@@ -599,14 +645,16 @@ async function bootstrapSettings() {
           compactTriggerMsgCount: num("compactTriggerMsgCount"),
           compactKeepRecent: num("compactKeepRecent"),
           referenceSites: text("referenceSites"),
-          memoryAutoWrite: checkbox("memoryAutoWrite", lastSettings?.chat.memoryAutoWrite ?? true)
+          memoryAutoWrite: checkbox("memoryAutoWrite", lastSettings?.chat.memoryAutoWrite ?? true),
+          deepseekApiKey: text("deepseekApiKey").trim()
         },
         presentation: {
           typeCharMs: num("typeCharMs"),
           sentenceGapMs: num("sentenceGapMs"),
           maxAssistantBubbles: num("maxAssistantBubbles"),
           fadeDelayMs: num("fadeDelayMs"),
-          panelIdleCloseMs: num("panelIdleCloseMs")
+          panelIdleCloseMs: num("panelIdleCloseMs"),
+          soundVolume: lastSettings?.presentation.soundVolume ?? 0.8
         },
         plugins: readPluginSettings(lastSettings?.plugins ?? { enabled: [], configs: {} }),
         voice: {
@@ -627,6 +675,27 @@ async function bootstrapSettings() {
           gsvSovitsWeights: text("gsvSovitsWeights").trim(),
           whisperBin: text("whisperBin").trim(),
           whisperModelPath: text("whisperModelPath").trim()
+        },
+        knowledge: {
+          enabled: checkbox("kbEnabled", lastSettings?.knowledge.enabled ?? true),
+          embedding: {
+            provider: lastSettings?.knowledge.embedding.provider ?? "dashscope",
+            baseUrl: text("kbEmbeddingBaseUrl").trim(),
+            apiKey: text("kbEmbeddingApiKey").trim(),
+            model: text("kbEmbeddingModel").trim()
+          },
+          search: {
+            topK: num("kbTopK"),
+            minScore: num("kbMinScore"),
+            contextBudgetChars: lastSettings?.knowledge.search.contextBudgetChars ?? 2400,
+            queryRewrite: kbQueryRewriteValue()
+          },
+          rerank: {
+            enabled: checkbox("kbRerankEnabled", lastSettings?.knowledge.rerank.enabled ?? false),
+            baseUrl: lastSettings?.knowledge.rerank.baseUrl ?? "",
+            apiKey: lastSettings?.knowledge.rerank.apiKey ?? "",
+            model: text("kbRerankModel").trim() || "gte-rerank-v2"
+          }
         }
       };
       const saved = await hoshi.saveSettings(payload);
@@ -642,6 +711,23 @@ async function bootstrapSettings() {
       status.textContent = error instanceof Error ? error.message : "保存失败";
     }
   });
+
+  const paintTheme = async (): Promise<void> => {
+    if (!hoshi.getTheme) return;
+    const theme = await hoshi.getTheme();
+    const tokens = theme?.tokens;
+    const root = document.documentElement;
+    root.style.setProperty("--hoshi-bg", tokens?.bg || "#f4f6fb");
+    root.style.setProperty("--hoshi-font", tokens?.font || '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
+    root.style.setProperty("--hoshi-dialog", tokens?.dialog || "#ffffff");
+    root.style.setProperty("--hoshi-menu", tokens?.menu || "#ffffff");
+  };
+  hoshi.onSettingsUpdated((settings) => {
+    lastSettings = settings;
+    void loadPlugins().catch(() => undefined);
+    void paintTheme();
+  });
+  void paintTheme();
 
   try {
     fill(await hoshi.getSettings());
