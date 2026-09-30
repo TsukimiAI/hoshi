@@ -779,6 +779,7 @@ export function createAgentServer(config: AgentServerConfig) {
         return;
       }
 
+      knowledgeHost.takeCitations();
       const desk = body.workspace === "desk";
       const hint = desk ? String(body.message ?? "") : "";
       canvasHost.setEnabled(desk, sessionId);

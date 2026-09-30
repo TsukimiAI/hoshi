@@ -4,10 +4,10 @@
   "private": true,
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc -b tsconfig.json && cp src/renderer/index.html dist/renderer/index.html && cp src/renderer/styles.css dist/renderer/styles.css && cp src/renderer/settings.html dist/renderer/settings.html && cp src/renderer/settings.css dist/renderer/settings.css && cp src/renderer/audio-player.html dist/renderer/audio-player.html && cp src/renderer/workbench.html dist/renderer/workbench.html && cp src/renderer/workbench.css dist/renderer/workbench.css && cp node_modules/pdfjs-dist/build/pdf.min.js dist/renderer/pdf.min.js && cp node_modules/pdfjs-dist/build/pdf.worker.min.js dist/renderer/pdf.worker.min.js && node scripts/copy-resources.mjs",
+    "build": "tsc -b tsconfig.json && cp src/renderer/index.html dist/renderer/index.html && cp src/renderer/styles.css dist/renderer/styles.css && cp src/renderer/settings.html dist/renderer/settings.html && cp src/renderer/settings.css dist/renderer/settings.css && cp src/renderer/audio-player.html dist/renderer/audio-player.html && cp src/renderer/remind-toast.html dist/renderer/remind-toast.html && cp src/renderer/workbench.html dist/renderer/workbench.html && cp src/renderer/workbench.css dist/renderer/workbench.css && cp node_modules/pdfjs-dist/build/pdf.min.js dist/renderer/pdf.min.js && cp node_modules/pdfjs-dist/build/pdf.worker.min.js dist/renderer/pdf.worker.min.js && node scripts/copy-resources.mjs",
     "fetch-whisper": "node scripts/fetch-whisper.mjs",
     "dev": "node scripts/fetch-whisper.mjs && pnpm run build && electron .",
-    "typecheck": "tsc -b tsconfig.json --pretty false && node scripts/copy-resources.mjs",
+    "typecheck": "tsc -b tsconfig.json --pretty false && cp src/renderer/remind-toast.html dist/renderer/remind-toast.html && node scripts/copy-resources.mjs",
     "pack": "node scripts/fetch-whisper.mjs && electron-builder --mac"
   },
   "build": {

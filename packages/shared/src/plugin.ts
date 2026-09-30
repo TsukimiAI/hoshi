@@ -74,6 +74,13 @@ export interface PluginFanAction {
   kind?: "panel";
 }
 
+export interface PluginAppItem {
+  pluginId: string;
+  title: string;
+  template: "panel" | "launcher" | "music" | "schedule";
+  icon: "music" | "panel" | "launcher" | "schedule";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

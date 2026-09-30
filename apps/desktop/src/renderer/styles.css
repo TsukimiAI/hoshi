@@ -106,12 +106,6 @@ body {
   transform: translateX(0) scale(1);
 }
 
-#fan-plugin-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 #pet {
   display: block;
   width: 168px;

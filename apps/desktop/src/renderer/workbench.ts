@@ -458,7 +458,7 @@ const kbUrl = document.getElementById("kb-url") as HTMLInputElement;
 const kbUrlBtn = document.getElementById("kb-url-btn") as HTMLButtonElement;
 const kbExportBtn = document.getElementById("kb-export-btn") as HTMLButtonElement;
 
-let rail: Rail = "skin";
+let rail: Rail = "desk";
 let currentTemplate: PluginTemplateKind | "" = "";
 let layoutNodes: LayoutNode[] = [];
 let themePack: {

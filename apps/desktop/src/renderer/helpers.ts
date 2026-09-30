@@ -115,6 +115,7 @@ interface HoshiApi {
   >;
   openPluginWindow: (pluginId: string, windowId: string) => Promise<void>;
   openPluginPanel: (pluginId: string) => Promise<void>;
+  openAppBox: () => Promise<void>;
   onPluginPanel: (handler: (open: boolean, width: number) => void) => void;
   setIgnoreMouseEvents: (ignore: boolean) => Promise<void>;
   moveWindowBy: (dx: number, dy: number) => Promise<void>;

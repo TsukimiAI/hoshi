@@ -208,3 +208,15 @@ export function isPluginMediaAllowed(pluginId: string, abs: string): boolean {
   const set = mediaFiles.get(pluginId);
   return set ? set.has(target) : false;
 }
+
+export function pluginIdForMediaPath(abs: string): string | null {
+  if (!abs || !isAbsolute(abs)) return null;
+  const target = realPath(abs);
+  for (const [id, root] of mediaRoots) {
+    if (root && (target === root || target.startsWith(root + sep))) return id;
+  }
+  for (const [id, set] of mediaFiles) {
+    if (set.has(target)) return id;
+  }
+  return null;
+}

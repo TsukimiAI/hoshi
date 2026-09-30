@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>应用</title>
+  <style>
+    :root { --hoshi-bg: #ececef; --hoshi-font: system-ui; --hoshi-dialog: #1d1d1f; --hoshi-menu: #ffffff; }
+    html, body { margin: 0; height: 100%; font-size: 13px; line-height: 1.3; font-family: var(--hoshi-font); background: transparent; color: var(--hoshi-dialog); }
+    #box {
+      position: relative;
+      box-sizing: border-box;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: #ececef;
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: 0 10px 28px rgba(40, 48, 72, 0.22);
+    }
+    #box.is-mini {
+      border-radius: 14px;
+      background: #f5f5f7;
+    }
+    #box.is-mini #bar {
+      display: flex;
+      position: absolute;
+      right: 6px;
+      top: 10px;
+      min-height: 0;
+      padding: 0;
+      z-index: 6;
+      background: transparent;
+    }
+    #box.is-mini #back, #box.is-mini #bar-title { display: none; }
+    #box.is-mini #body { background: #f5f5f7; }
+    #bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 40px;
+      padding: 6px 10px 0;
+      flex-shrink: 0;
+    }
+    #back, #close, #bar-mini {
+      width: 28px; height: 28px; border: none; border-radius: 8px;
+      background: rgba(255,255,255,0.72); color: #3a3a3c; cursor: pointer; font-size: 14px;
+    }
+    #back[hidden], #bar-mini[hidden] { display: none; }
+    #box.is-mini #bar-mini { display: none !important; }
+    #bar-title { flex: 1; font-size: 13px; font-weight: 600; min-width: 0; }
+    #home {
+      flex: 1;
+      overflow: auto;
+      padding: 8px 12px 12px;
+      min-height: 0;
+    }
+    #home.is-off { display: none; }
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px 6px;
+    }
+    .app-icon {
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+      border: none; background: transparent; cursor: pointer; padding: 0; color: inherit;
+    }
+    .app-glyph-img {
+      width: 56px; height: 56px; border-radius: 14px;
+      display: block; box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+    }
+    .app-name {
+      width: 100%; font-size: 11px; text-align: center; color: #3a3a3c;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #empty { text-align: center; color: #6e6e73; padding: 28px 8px; font-size: 12px; }
+    #body { flex: 1; position: relative; min-height: 0; display: flex; flex-direction: column; }
+    #stage { position: absolute; inset: 0; pointer-events: none; }
+    #stage.open { pointer-events: auto; background: #ececef; }
+    #box.is-mini #stage.open { background: #f5f5f7; }
+    #box.is-mini #home { display: none; }
+    .app-view {
+      position: absolute; inset: 0; overflow: auto;
+      padding: 12px; color: var(--hoshi-dialog); background: var(--hoshi-bg);
+      font-size: 13px; line-height: 1.4; font-family: var(--hoshi-font);
+      visibility: hidden;
+    }
+    .app-view.is-on { visibility: visible; }
+    .app-view.music-app {
+      padding: 0;
+      background: #f5f5f7;
+      display: flex;
+      flex-direction: column;
+      color: #1d1d1f;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    }
+    .app-view.music-app.is-on { visibility: visible; display: flex; }
+    .app-view.schedule-app {
+      padding: 0;
+      background: #f5f5f7;
+      display: flex;
+      flex-direction: column;
+      color: #1d1d1f;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    }
+    .app-view.schedule-app.is-on { visibility: visible; display: flex; }
+    .schedule-app button { background: transparent; box-shadow: none; outline: none; cursor: pointer; }
+    .schedule-app button:focus { outline: none; }
+    .schedule-month-page, .schedule-form {
+      flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 6px 10px 8px;
+      overflow: hidden; background: #f5f5f7;
+    }
+    .schedule-month-page[hidden], .schedule-form[hidden] { display: none !important; }
+    .schedule-bar { display: flex; align-items: center; margin: 0 0 4px; }
+    .schedule-month-nav { display: flex; align-items: center; gap: 4px; min-width: 0; }
+    .schedule-month-label { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; }
+    .schedule-prev, .schedule-next {
+      width: 24px; height: 24px; border: none; font-size: 16px; color: #007aff; line-height: 1;
+    }
+    .schedule-add { margin-left: auto; border: none; padding: 4px 2px; font-size: 13px; font-weight: 600; color: #007aff; }
+    .schedule-week {
+      display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0;
+      font-size: 10px; color: #8e8e93; text-align: center; margin: 2px 0 2px;
+    }
+    .schedule-grid {
+      display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(6, 28px);
+      flex-shrink: 0;
+    }
+    .schedule-cell {
+      position: relative; border: none; padding: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; color: inherit; border-radius: 8px;
+    }
+    .schedule-cell.is-out { color: #c7c7cc; }
+    .schedule-cell-num { font-size: 12px; line-height: 16px; width: 22px; height: 22px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .schedule-cell.is-today .schedule-cell-num { box-shadow: inset 0 0 0 1.5px #007aff; }
+    .schedule-cell.is-on .schedule-cell-num { background: #007aff; color: #fff; box-shadow: none; }
+    .schedule-cell.is-on.is-out .schedule-cell-num { background: #a0cfff; color: #fff; }
+    .schedule-cell-dot {
+      width: 4px; height: 4px; border-radius: 50%; background: #007aff; margin-top: 1px;
+    }
+    .schedule-cell.is-on .schedule-cell-dot { background: #fff; }
+    .schedule-agenda-head { font-size: 12px; font-weight: 700; margin: 6px 2px 2px; flex-shrink: 0; }
+    .schedule-agenda { flex: 1; min-height: 0; overflow: auto; }
+    .schedule-agenda-empty {
+      font-size: 12px; color: #8e8e93; padding: 8px 2px; flex-shrink: 0;
+    }
+    .schedule-agenda-empty[hidden] { display: none !important; }
+    .schedule-agenda-row {
+      display: flex; gap: 10px; align-items: baseline; width: 100%; border: none;
+      text-align: left; padding: 6px 4px; border-radius: 8px; color: inherit;
+    }
+    .schedule-agenda-row:hover { background: rgba(0,0,0,0.04); }
+    .schedule-agenda-time { flex-shrink: 0; width: 40px; font-size: 11px; color: #8e8e93; }
+    .schedule-agenda-title { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .schedule-month-page, .schedule-form {
+      flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 6px 10px 8px;
+      overflow: hidden; background: #f5f5f7;
+    }
+    .schedule-form-body { flex: 1; min-height: 0; overflow: hidden; }
+    .schedule-field { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #8e8e93; margin: 0 0 8px; }
+    .schedule-field input, .schedule-field textarea, .schedule-field select {
+      border: none; border-radius: 10px; padding: 7px 10px; font-size: 13px; line-height: 1.4; color: #1d1d1f; background: #fff;
+    }
+    .schedule-form-actions {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+      margin-top: 4px; padding-top: 8px; background: #f5f5f7;
+    }
+    .schedule-form-spacer { flex: 1; }
+    .schedule-cancel, .schedule-save, .schedule-delete {
+      border: none; border-radius: 10px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    .schedule-app .schedule-cancel { background: transparent; color: #8e8e93; }
+    .schedule-app .schedule-save { background: #007aff; color: #fff; }
+    .schedule-app .schedule-delete { background: transparent; color: #ff3b30; padding-left: 0; }
+    .schedule-delete[hidden] { display: none !important; }
+    .music-lib, .music-now {
+      flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px 14px 10px;
+      overflow: hidden; background: #f5f5f7;
+    }
+    .music-lib[hidden], .music-now[hidden] { display: none !important; }
+    .music-lib-bar { display: flex; align-items: baseline; margin: 2px 0 12px; }
+    .music-lib-bar span { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+    .music-add { margin-left: auto; }
+    .music-empty {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #8e8e93; font-size: 13px; gap: 8px; padding: 0 16px; text-align: center;
+    }
+    .music-empty[hidden] { display: none !important; }
+    .music-empty-ico {
+      width: 48px; height: 48px; border-radius: 12px;
+      background: linear-gradient(180deg, #ff6b8a, #fa233b);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 6px 14px rgba(250, 35, 59, 0.28);
+    }
+    .music-list { flex: 1; overflow: auto; margin: 0 -4px; }
+    .music-row {
+      display: flex; gap: 10px; align-items: center; width: 100%; border: none;
+      text-align: left; padding: 7px 6px; cursor: pointer; color: inherit; border-radius: 10px;
+    }
+    .music-row:hover { background: rgba(0,0,0,0.04); }
+    .music-row.is-on { background: rgba(250, 45, 72, 0.08); }
+    .music-row-art {
+      width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0;
+      background: #d1d1d6 center/cover no-repeat;
+    }
+    .music-row-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .music-row-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .music-row-artist { font-size: 11px; color: #8e8e93; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .music-art {
+      width: 120px; height: 120px; flex: 0 0 120px; aspect-ratio: 1 / 1;
+      border-radius: 10px; align-self: center; margin: 2px 0 8px;
+      background: #d1d1d6 center/cover no-repeat;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.14);
+    }
+    .music-title {
+      font-size: 14px; font-weight: 700; text-align: center; letter-spacing: -0.2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; flex-shrink: 0;
+    }
+    .music-artist {
+      font-size: 12px; color: #8e8e93; text-align: center; margin: 2px 0 8px;
+      min-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; flex-shrink: 0;
+    }
+    .music-seek {
+      position: relative; width: 100%; height: 24px; flex-shrink: 0;
+      touch-action: none; cursor: pointer; user-select: none; background: #f5f5f7;
+    }
+    .music-seek-track {
+      position: absolute; left: 0; right: 0; top: 10px; height: 4px;
+      border-radius: 99px; background: #d8d8dc; overflow: visible; pointer-events: none;
+    }
+    .music-seek-fill {
+      height: 100%; width: 0; border-radius: 99px; background: #1d1d1f;
+    }
+    .music-seek-thumb {
+      position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px;
+      border-radius: 50%; background: #1d1d1f; left: 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25); pointer-events: none;
+    }
+    .music-vol {
+      width: 100%; height: 18px; margin: 0; background: transparent; -webkit-appearance: none; appearance: none;
+    }
+    .music-vol::-webkit-slider-runnable-track {
+      height: 4px; border-radius: 99px; background: #d8d8dc;
+    }
+    .music-vol::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px;
+      border-radius: 50%; background: #1d1d1f; border: none; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .music-time { display: flex; justify-content: space-between; font-size: 10px; color: #8e8e93; margin: 2px 1px 10px; }
+    .music-ctrl {
+      display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+      margin: 0 0 6px; min-height: 44px;
+    }
+    .music-ctrl-mid { display: flex; align-items: center; justify-content: center; gap: 10px; }
+    .music-ctrl-side { display: flex; align-items: center; }
+    .music-ctrl-right { justify-content: flex-end; }
+    .music-mode {
+      min-width: 36px !important; width: auto !important; padding: 0 4px !important;
+      font-size: 11px; font-weight: 600; color: #fa2d48;
+    }
+    .music-mode.is-off { color: #8e8e93; }
+    .music-vol-wrap { position: relative; display: flex; justify-content: flex-end; }
+    .music-vol-btn { border: none; width: 32px; height: 28px; color: #8e8e93; display: flex; align-items: center; justify-content: center; }
+    .music-vol-pop {
+      position: absolute; right: 0; bottom: 28px;
+      width: 140px; padding: 8px 10px 6px; border-radius: 10px;
+      background: #fff; box-shadow: 0 8px 20px rgba(0,0,0,0.12); z-index: 4;
+    }
+    .music-vol-pop[hidden] { display: none !important; }
+    .music-row-mark { margin-left: auto; font-size: 10px; color: #fa2d48; flex-shrink: 0; }
+    .music-dock {
+      height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 40px 0 10px;
+    }
+    .music-dock[hidden] { display: none !important; }
+    .music-dock-art {
+      width: 40px; height: 40px; border: none; border-radius: 8px; padding: 0; flex-shrink: 0;
+      background: #d1d1d6 center/cover no-repeat;
+    }
+    .music-dock-meta { min-width: 0; flex: 1; }
+    .music-dock-title, .music-dock-artist {
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .music-dock-title { font-size: 12px; font-weight: 600; }
+    .music-dock-artist { font-size: 10px; color: #8e8e93; }
+    .music-dock-play, .music-dock-next {
+      width: 32px; height: 32px; border: none; color: #1d1d1f;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .music-audio { display: none; }
+    .app-view h1 { font-size: 14px; margin: 0 0 10px; }
+    .app-view button { cursor: pointer; background: var(--hoshi-menu); }
+    .music-app button {
+      background: transparent; box-shadow: none; outline: none; cursor: pointer;
+    }
+    .music-app button:focus { outline: none; }
+    .music-add {
+      border: none; padding: 4px 2px; font-size: 13px; font-weight: 600; color: #fa2d48;
+    }
+    .music-ctrl button {
+      width: 36px; height: 36px; padding: 0; border: none; color: #1d1d1f;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .music-play {
+      width: 44px; height: 44px; border-radius: 50%; background: #1d1d1f !important; color: #fff;
+    }
+    .music-play svg, .music-prev svg, .music-next svg { display: block; }
+    .app-view audio { width: 100%; margin-top: 10px; }
+    .app-view #list button { display: block; width: 100%; text-align: left; margin: 0 0 6px; }
+    .app-view #deco { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    .app-view #deco img, .app-view #deco span { position: absolute; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="box">
+    <div id="bar">
+      <button id="back" type="button" hidden aria-label="返回">‹</button>
+      <span id="bar-title">应用</span>
+      <button id="bar-mini" type="button" hidden aria-label="收起">–</button>
+      <button id="close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div id="body">
+      <div id="home">
+        <div id="grid"></div>
+        <div id="empty" hidden>还没有应用</div>
+      </div>
+      <div id="stage"></div>
+    </div>
+  </div>
+  <script src="player.js"></script>
+  <script src="launcher.js"></script>
+  <script src="music.js"></script>
+  <script src="schedule.js"></script>
+  <script src="apps.js"></script>
+</body>
+</html>

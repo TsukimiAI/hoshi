@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  APPS_BOX_W,
+  APPS_LAUNCHER_H,
+  APPS_MINI_H,
+  APPS_PANEL_H,
+  APPS_SCHEDULE_H,
   PANEL_MAX_H,
   PANEL_MIN_H,
   PET_SLOT,
+  appsHomeSize,
+  appsMiniSize,
+  appsTemplateSize,
   clampPanelSize,
   panelBoundsFromPet,
   parsePanelSize,
@@ -37,6 +45,30 @@ describe("pinPetBounds", () => {
   it("已是默认尺寸则不变", () => {
     expect(pinPetBounds(pet, { width: 520, height: 360 })).toEqual(pet);
     expect(petWindowChanged(pet, pinPetBounds(pet, { width: 520, height: 360 }))).toBe(false);
+  });
+});
+
+describe("appsHomeSize", () => {
+  it("空列表用空状态高度，按行长高并钳在上限内", () => {
+    expect(appsHomeSize(0)).toEqual({ width: APPS_BOX_W, height: 160 });
+    expect(appsHomeSize(1).height).toBe(appsHomeSize(3).height);
+    expect(appsHomeSize(4).height).toBeGreaterThan(appsHomeSize(3).height);
+    expect(appsHomeSize(99).height).toBeLessThanOrEqual(360);
+  });
+});
+
+describe("appsTemplateSize", () => {
+  it("播放器与启动器画布高度不同", () => {
+    expect(appsTemplateSize("panel")).toEqual({ width: APPS_BOX_W, height: APPS_PANEL_H });
+    expect(appsTemplateSize("music")).toEqual({ width: APPS_BOX_W, height: APPS_PANEL_H });
+    expect(appsTemplateSize("schedule")).toEqual({ width: APPS_BOX_W, height: APPS_SCHEDULE_H });
+    expect(appsTemplateSize("launcher")).toEqual({ width: APPS_BOX_W, height: APPS_LAUNCHER_H });
+  });
+});
+
+describe("appsMiniSize", () => {
+  it("迷你条高度", () => {
+    expect(appsMiniSize()).toEqual({ width: APPS_BOX_W, height: APPS_MINI_H });
   });
 });
 
