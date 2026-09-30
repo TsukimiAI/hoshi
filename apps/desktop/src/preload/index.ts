@@ -133,6 +133,9 @@ const hoshiApi = {
   async openPluginPanel(pluginId: string) {
     await ipcRenderer.invoke("hoshi:open-plugin-panel", pluginId);
   },
+  async openAppBox() {
+    await ipcRenderer.invoke("hoshi:open-app-box");
+  },
   onPluginPanel(handler: (open: boolean, width: number) => void) {
     ipcRenderer.on("hoshi:plugin-panel", (_event, payload: { open?: unknown; width?: unknown }) => {
       handler(Boolean(payload?.open), Number(payload?.width ?? 0));

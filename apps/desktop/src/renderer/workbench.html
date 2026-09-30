@@ -8,25 +8,25 @@
   <body>
     <div id="shell">
       <nav id="rail">
-        <button id="rail-desk" class="rail-btn" type="button" data-rail="desk">
+        <button id="rail-desk" class="rail-btn active" type="button" data-rail="desk">
           <span class="rail-ico">🖼</span><span class="rail-label">画布</span>
         </button>
-        <button id="rail-skin" class="rail-btn active" type="button" data-rail="skin">
+        <button id="rail-kb" class="rail-btn" type="button" data-rail="kb">
+          <span class="rail-ico">📚</span><span class="rail-label">知识库</span>
+        </button>
+        <button id="rail-connect" class="rail-btn" type="button" data-rail="connect">
+          <span class="rail-ico">🔌</span><span class="rail-label">连接</span>
+        </button>
+        <button id="rail-skin" class="rail-btn" type="button" data-rail="skin">
           <span class="rail-ico">🎨</span><span class="rail-label">模板</span>
         </button>
         <button id="rail-shop" class="rail-btn" type="button" data-rail="shop">
           <span class="rail-ico">🛍️</span><span class="rail-label">工坊</span>
         </button>
-        <button id="rail-connect" class="rail-btn" type="button" data-rail="connect">
-          <span class="rail-ico">🔌</span><span class="rail-label">连接</span>
-        </button>
-        <button id="rail-kb" class="rail-btn" type="button" data-rail="kb">
-          <span class="rail-ico">📚</span><span class="rail-label">知识库</span>
-        </button>
       </nav>
       <aside id="sidebar">
         <div id="side-head">
-          <span id="side-title">模板</span>
+          <span id="side-title">会话</span>
           <button id="kb-new-btn" type="button" hidden>＋ 新建</button>
           <button id="desk-new-btn" type="button" hidden>＋ 会话</button>
         </div>
@@ -39,7 +39,7 @@
       <section id="main">
         <header id="main-head">
           <button id="back-btn" type="button" hidden>← 返回</button>
-          <span id="current-id">未选择</span>
+          <span id="current-id">共享画布</span>
           <p id="wb-note" class="editor-hint" hidden></p>
           <button id="new-btn" type="button">新建</button>
           <button id="publish-btn" type="button" disabled>上线</button>

@@ -1,14 +1,15 @@
-import { BrowserWindow, dialog, ipcMain, net, shell, type Session, type WebContents } from "electron";
+import { BrowserWindow, dialog, ipcMain, shell, type Session, type WebContents } from "electron";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, relative } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   hasPluginContributes,
   hasPluginUi,
   parsePluginContributes,
   parsePluginUi,
+  type PluginAppItem,
   type PluginFanAction,
   type PluginContributes,
   type PluginUi
@@ -20,14 +21,23 @@ import {
   disposePluginCaps,
   isPluginMediaAllowed,
   allowPluginMediaPaths,
+  pluginIdForMediaPath,
   setPluginMediaRoot
 } from "./pluginCaps";
 import { disposeAllPluginExecute, disposePluginExecute } from "./pluginExecuteHost";
 import {
+  appsHomeSize,
+  appsTemplateSize,
   clampPanelSize,
   panelBoundsFromPet,
   parsePanelSize
 } from "./pluginPanelLayout";
+import { parseAudioTags, audioTagFromPath } from "./audioTags";
+import { serveLocalMedia } from "./mediaFile";
+
+export const HOST_MUSIC_ID = "hoshi_music";
+export const HOST_SCHEDULE_ID = "hoshi_schedule";
+const MUSIC_FILTERS = [{ name: "音频", extensions: ["mp3", "m4a", "flac", "wav", "aac", "ogg"] }];
 
 const REL_SEG = /^[A-Za-z0-9._-]+$/;
 const IMAGE_EXT = new Set([".png", ".webp", ".jpg", ".jpeg"]);
@@ -43,16 +53,32 @@ const cspSessions = new WeakSet<Session>();
 const mediaBound = new WeakMap<Session, string>();
 const mediaRedirects = new WeakSet<Session>();
 let storageDir = "";
-let getMainWindow: () => BrowserWindow | null = () => null;
+let getMainWindowFn: () => BrowserWindow | null = () => null;
+let onPanelLayout: (() => void) | null = null;
+let onHostKvSet: ((pluginId: string, key: string) => void) | null = null;
+
+export function getMainWindow(): BrowserWindow | null {
+  return getMainWindowFn();
+}
+
+export function appsBoxSize(): { width: number; height: number } | null {
+  if (!appsBox || !panelWin || panelWin.isDestroyed() || panelWidth <= 0 || panelHeight <= 0) {
+    return null;
+  }
+  return { width: panelWidth, height: panelHeight };
+}
 let windowSize = { width: 520, height: 360 };
 let panelWin: BrowserWindow | null = null;
 let panelPluginId = "";
+let appsBox = false;
 let panelWidth = 0;
 let panelHeight = 0;
 let mainMoveWin: BrowserWindow | null = null;
 let mainMoveFollow: (() => void) | null = null;
 let runPlugin: ((pluginId: string, args: Record<string, unknown>) => Promise<string>) | null = null;
 let getTheme: () => { id: string; tokens: ThemeTokens } | null = () => null;
+let getPluginsDir: () => string = () => "";
+let getEnabled: () => string[] = () => [];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -210,11 +236,12 @@ function parseMediaRequest(url: string): { id: string; abs: string } | null {
   }
 }
 
-function handleMediaRequest(pluginId: string, request: Request): Response | Promise<Response> {
+function handleMediaRequest(request: Request): Response | Promise<Response> {
   const parsed = parseMediaRequest(request.url);
-  if (!parsed || parsed.id !== pluginId) {
+  if (!parsed) {
     return new Response("forbidden", { status: 403 });
   }
+  const pluginId = parsed.id;
   const abs = parsed.abs;
   if (!isAbsolute(abs) || abs.includes("\0") || !existsSync(abs) || !statSync(abs).isFile()) {
     return new Response("not found", { status: 404 });
@@ -222,37 +249,39 @@ function handleMediaRequest(pluginId: string, request: Request): Response | Prom
   if (!isPluginMediaAllowed(pluginId, abs)) {
     return new Response("forbidden", { status: 403 });
   }
-  const headers: Record<string, string> = {};
-  const range = request.headers.get("range");
-  if (range) headers.Range = range;
-  return net.fetch(pathToFileURL(abs).href, {
-    method: request.method,
-    headers,
-    bypassCustomProtocolHandlers: true
-  });
+  return serveLocalMedia(abs, request);
 }
 
-function ensureMediaProtocol(ses: Session, pluginId: string): void {
+function ensureMediaProtocol(ses: Session): void {
   if (mediaBound.has(ses)) return;
-  mediaBound.set(ses, pluginId);
+  mediaBound.set(ses, "*");
   try {
-    ses.protocol.handle("hoshi-media", (request) => handleMediaRequest(pluginId, request));
+    ses.protocol.handle("hoshi-media", (request) => handleMediaRequest(request));
   } catch {
     /* already registered on this session */
   }
 }
 
-function hookMediaRedirect(session: Session, pluginId: string): void {
+function hookMediaRedirect(session: Session): void {
   if (mediaRedirects.has(session)) return;
   mediaRedirects.add(session);
   session.webRequest.onBeforeRequest({ urls: ["file://*"] }, (details, callback) => {
     try {
       const abs = fileURLToPath(details.url);
-      if (!abs || isPluginMediaAllowed(pluginId, abs)) {
+      if (!abs) {
         callback({});
         return;
       }
-      callback({ redirectURL: mediaUrlFor(pluginId, abs) });
+      const id = pluginIdForMediaPath(abs);
+      if (id && isPluginMediaAllowed(id, abs)) {
+        callback({});
+        return;
+      }
+      if (id) {
+        callback({ redirectURL: mediaUrlFor(id, abs) });
+        return;
+      }
+      callback({});
     } catch {
       callback({});
     }
@@ -477,6 +506,7 @@ function layoutPanel(pw: number, ph: number): void {
   panelWidth = size.width;
   panelHeight = size.height;
   panelWin.setBounds(panelBoundsFromPet(win.getBounds(), size), false);
+  onPanelLayout?.();
 }
 
 export function closePluginPanel(): void {
@@ -484,11 +514,13 @@ export function closePluginPanel(): void {
   const dying = panelWin;
   panelWin = null;
   panelPluginId = "";
+  appsBox = false;
   panelWidth = 0;
   panelHeight = 0;
   if (dying && !dying.isDestroyed()) {
     dying.destroy();
   }
+  onPanelLayout?.();
 }
 
 function pluginIdOf(sender: WebContents): string | undefined {
@@ -496,8 +528,17 @@ function pluginIdOf(sender: WebContents): string | undefined {
 }
 
 function templateOf(pluginId: string) {
+  if (pluginId === HOST_MUSIC_ID) return "panel";
   const dir = pluginDirs.get(pluginId);
   return dir ? pluginTemplateOf(dir) : "theme";
+}
+
+function canPickFiles(pluginId: string): boolean {
+  return pluginId === HOST_MUSIC_ID || templateOf(pluginId) === "panel";
+}
+
+function canRunPlugin(pluginId: string): boolean {
+  return pluginId !== HOST_MUSIC_ID && templateOf(pluginId) === "panel";
 }
 
 function handlePluginClose(sender: WebContents): boolean {
@@ -528,24 +569,40 @@ function ensureCloseIpc(): void {
   });
 }
 
+function pluginAppTitle(dir: string, fallback: string): string {
+  try {
+    const raw = JSON.parse(readFileSync(join(dir, "plugin.json"), "utf8")) as unknown;
+    if (!isRecord(raw)) return fallback.slice(0, 24);
+    const uiRec = isRecord(raw.ui) && isRecord(raw.ui.menu) ? raw.ui.menu : {};
+    const menuLabel = typeof uiRec.label === "string" ? uiRec.label.trim() : "";
+    const slots = isRecord(raw.slots) ? raw.slots : {};
+    const name = typeof raw.name === "string" ? raw.name.trim() : "";
+    const title =
+      typeof slots.title === "string" && slots.title.trim()
+        ? slots.title.trim()
+        : menuLabel || name || fallback;
+    return title.slice(0, 24);
+  } catch {
+    return fallback.slice(0, 24);
+  }
+}
+
 function pluginSlotsOf(pluginId: string): {
   title: string;
   multiple: boolean;
   filters: { name: string; extensions: string[] }[];
 } {
   const dir = pluginDirs.get(pluginId);
+  if (pluginId === HOST_MUSIC_ID) {
+    return { title: "音乐", multiple: true, filters: MUSIC_FILTERS };
+  }
   const fallback = { title: pluginId, multiple: true, filters: [] as { name: string; extensions: string[] }[] };
   if (!dir) return fallback;
   try {
     const raw = JSON.parse(readFileSync(join(dir, "plugin.json"), "utf8")) as unknown;
     if (!isRecord(raw)) return fallback;
-    const uiRec = isRecord(raw.ui) && isRecord(raw.ui.menu) ? raw.ui.menu : {};
-    const menuLabel = typeof uiRec.label === "string" ? uiRec.label.trim() : "";
     const slots = isRecord(raw.slots) ? raw.slots : {};
-    const title =
-      typeof slots.title === "string" && slots.title.trim()
-        ? slots.title.trim().slice(0, 24)
-        : menuLabel || (typeof raw.name === "string" ? raw.name.trim() : pluginId);
+    const title = pluginAppTitle(dir, pluginId);
     const multiple = slots.multiple !== false;
     const filters = Array.isArray(slots.filters)
       ? slots.filters.flatMap((item) => {
@@ -578,7 +635,9 @@ function ensureKvIpc(): void {
       throw new Error("forbidden");
     }
     pluginKvSet(storageDir, id, String(key ?? ""), value);
-    notifyPluginKv(id, String(key ?? ""), typeof value === "string" ? value : JSON.stringify(value ?? ""));
+    const keyText = String(key ?? "");
+    notifyPluginKv(id, keyText, typeof value === "string" ? value : JSON.stringify(value ?? ""));
+    onHostKvSet?.(id, keyText);
   });
   ipcMain.handle("hoshi:plugin-slots", (event) => {
     const id = pluginIdOf(event.sender);
@@ -612,7 +671,7 @@ function ensureKvIpc(): void {
     if (!id) {
       throw new Error("forbidden");
     }
-    if (templateOf(id) !== "panel") {
+    if (!canPickFiles(id)) {
       throw new Error("ctx 禁止 pick");
     }
     const rec = isRecord(opts) ? opts : {};
@@ -643,15 +702,77 @@ function ensureKvIpc(): void {
     if (!panelWin || event.sender !== panelWin.webContents) {
       throw new Error("forbidden");
     }
+    if (appsBox) {
+      return;
+    }
     const size = parsePanelSize(payload);
     layoutPanel(size.width, size.height);
+  });
+  ipcMain.handle("hoshi:apps-set-size", (event, payload: unknown) => {
+    if (!panelWin || event.sender !== panelWin.webContents || !appsBox) {
+      throw new Error("forbidden");
+    }
+    const size = parsePanelSize(payload);
+    layoutPanel(size.width, size.height);
+  });
+  ipcMain.handle("hoshi:list-plugin-apps", (event) => {
+    if (!panelWin || event.sender !== panelWin.webContents || !appsBox) {
+      throw new Error("forbidden");
+    }
+    const apps = listPluginApps(getPluginsDir(), getEnabled());
+    return { apps, size: appsHomeSize(apps.length) };
+  });
+  ipcMain.handle("hoshi:plugin-activate", (event, pluginId: unknown) => {
+    if (!panelWin || event.sender !== panelWin.webContents || !appsBox) {
+      throw new Error("forbidden");
+    }
+    const id = String(pluginId ?? "");
+    if (id === HOST_MUSIC_ID) {
+      bindHostContents(event.sender, id);
+      return { pluginId: id, template: "music" as const, size: appsTemplateSize("music") };
+    }
+    if (id === HOST_SCHEDULE_ID) {
+      bindHostContents(event.sender, id);
+      return { pluginId: id, template: "schedule" as const, size: appsTemplateSize("schedule") };
+    }
+    const plugin = enabledPlugins(getPluginsDir(), getEnabled()).find((item) => item.id === id);
+    if (!plugin) {
+      throw new Error("面板不存在");
+    }
+    const tpl = pluginTemplateOf(plugin.dir);
+    if (tpl !== "panel" && tpl !== "launcher") {
+      throw new Error("面板不存在");
+    }
+    bindWebContents(event.sender, id, plugin.dir);
+    return { pluginId: id, template: tpl, size: appsTemplateSize(tpl) };
+  });
+  ipcMain.handle("hoshi:music-probe", (event, paths: unknown) => {
+    const id = pluginIdOf(event.sender);
+    if (id !== HOST_MUSIC_ID) {
+      throw new Error("forbidden");
+    }
+    const list = Array.isArray(paths) ? paths.map((item) => String(item ?? "")) : [];
+    const out = [];
+    for (const file of list) {
+      if (!file || !isAbsolute(file) || !existsSync(file)) continue;
+      try {
+        if (!statSync(file).isFile()) continue;
+        allowPluginMediaPaths(id, [file]);
+        const buf = readFileSync(file);
+        const slice = buf.length > 4_000_000 ? buf.subarray(0, 4_000_000) : buf;
+        out.push(parseAudioTags(file, slice));
+      } catch {
+        out.push(audioTagFromPath(file));
+      }
+    }
+    return out;
   });
   ipcMain.handle("hoshi:plugin-run", async (event, args: unknown) => {
     const id = pluginIdOf(event.sender);
     if (!id || !runPlugin) {
       throw new Error("forbidden");
     }
-    if (templateOf(id) !== "panel") {
+    if (!canRunPlugin(id)) {
       throw new Error("ctx 禁止 run");
     }
     const rec = isRecord(args) ? args : {};
@@ -688,11 +809,19 @@ export function configurePluginHost(input: {
   getMainWindow: () => BrowserWindow | null;
   windowSize: { width: number; height: number };
   getTheme?: () => { id: string; tokens: ThemeTokens } | null;
+  getPluginsDir?: () => string;
+  getEnabled?: () => string[];
+  onPanelLayout?: () => void;
+  onHostKvSet?: (pluginId: string, key: string) => void;
 }): void {
   storageDir = input.storageDir;
-  getMainWindow = input.getMainWindow;
+  getMainWindowFn = input.getMainWindow;
   windowSize = input.windowSize;
   if (input.getTheme) getTheme = input.getTheme;
+  if (input.getPluginsDir) getPluginsDir = input.getPluginsDir;
+  if (input.getEnabled) getEnabled = input.getEnabled;
+  onPanelLayout = input.onPanelLayout ?? null;
+  onHostKvSet = input.onHostKvSet ?? null;
   ensureCloseIpc();
   ensureKvIpc();
 }
@@ -701,6 +830,13 @@ export function setPluginRun(
   fn: (pluginId: string, args: Record<string, unknown>) => Promise<string>
 ): void {
   runPlugin = fn;
+}
+
+export function notifyAppsChanged(removedId?: string): void {
+  if (!panelWin || panelWin.isDestroyed() || !appsBox) {
+    return;
+  }
+  panelWin.webContents.send("hoshi:apps-changed", { removedId: removedId ?? "" });
 }
 
 export function notifyPluginKv(pluginId: string, key: string, value: string): void {
@@ -732,6 +868,26 @@ export function listPluginFanActions(pluginsDir: string, enabled: string[]): Plu
   return out.slice(0, 8);
 }
 
+export function listPluginApps(pluginsDir: string, enabled: string[]): PluginAppItem[] {
+  const out: PluginAppItem[] = [
+    { pluginId: HOST_MUSIC_ID, title: "音乐", template: "music", icon: "music" },
+    { pluginId: HOST_SCHEDULE_ID, title: "日程", template: "schedule", icon: "schedule" }
+  ];
+  for (const plugin of enabledPlugins(pluginsDir, enabled)) {
+    const tpl = pluginTemplateOf(plugin.dir);
+    if (tpl !== "panel" && tpl !== "launcher") {
+      continue;
+    }
+    out.push({
+      pluginId: plugin.id,
+      title: pluginAppTitle(plugin.dir, plugin.name || plugin.id),
+      template: tpl,
+      icon: tpl
+    });
+  }
+  return out;
+}
+
 export function pluginSpriteFile(pluginsDir: string, enabled: string[], emotion: string): string | null {
   let found: string | null = null;
   for (const plugin of enabledPlugins(pluginsDir, enabled)) {
@@ -754,7 +910,51 @@ export function pluginSpriteFile(pluginsDir: string, enabled: string[], emotion:
   return found;
 }
 
+const chromeBound = new WeakSet<WebContents>();
+
+function bindPluginChrome(wc: WebContents): void {
+  if (chromeBound.has(wc)) {
+    return;
+  }
+  chromeBound.add(wc);
+  hookCsp(wc.session);
+  ensureMediaProtocol(wc.session);
+  hookMediaRedirect(wc.session);
+  wc.setWindowOpenHandler(() => ({ action: "deny" }));
+  wc.on("will-navigate", (event, url) => {
+    if (url !== wc.getURL()) {
+      event.preventDefault();
+    }
+  });
+  wc.on("destroyed", () => {
+    const id = contentsToPlugin.get(wc);
+    if (id) {
+      pluginContents.get(id)?.delete(wc);
+    }
+  });
+}
+
+function bindHostContents(wc: WebContents, pluginId: string): void {
+  bindPluginChrome(wc);
+  const prev = contentsToPlugin.get(wc);
+  if (prev && prev !== pluginId) {
+    pluginContents.get(prev)?.delete(wc);
+  }
+  contentsToPlugin.set(wc, pluginId);
+  let set = pluginContents.get(pluginId);
+  if (!set) {
+    set = new Set();
+    pluginContents.set(pluginId, set);
+  }
+  set.add(wc);
+}
+
 function bindWebContents(wc: WebContents, pluginId: string, pluginDir: string): void {
+  bindPluginChrome(wc);
+  const prev = contentsToPlugin.get(wc);
+  if (prev && prev !== pluginId) {
+    pluginContents.get(prev)?.delete(wc);
+  }
   contentsToPlugin.set(wc, pluginId);
   pluginDirs.set(pluginId, pluginDir);
   let set = pluginContents.get(pluginId);
@@ -763,37 +963,17 @@ function bindWebContents(wc: WebContents, pluginId: string, pluginDir: string): 
     pluginContents.set(pluginId, set);
   }
   set.add(wc);
-  wc.on("destroyed", () => {
-    set.delete(wc);
-  });
-  hookCsp(wc.session);
-  ensureMediaProtocol(wc.session, pluginId);
   setPluginMediaRoot(pluginId, pluginDir);
-  hookMediaRedirect(wc.session, pluginId);
-  wc.setWindowOpenHandler(() => ({ action: "deny" }));
-  wc.on("will-navigate", (event, url) => {
-    if (url !== wc.getURL()) {
-      event.preventDefault();
-    }
-  });
 }
 
-export function openPluginPanel(pluginsDir: string, enabled: string[], pluginId: string): void {
+function appsEntry(): string {
+  return join(__dirname, "../resources/plugin-chrome/apps.html");
+}
+
+export function openAppBox(pluginsDir: string, enabled: string[]): void {
   ensureCloseIpc();
   ensureKvIpc();
-  const plugin = enabledPlugins(pluginsDir, enabled).find((item) => item.id === pluginId);
-  if (!plugin) {
-    throw new Error("面板不存在");
-  }
-  const tpl = pluginTemplateOf(plugin.dir);
-  if (tpl !== "panel" && tpl !== "launcher") {
-    throw new Error("面板不存在");
-  }
-  const entry = join(
-    __dirname,
-    "../resources/plugin-chrome",
-    tpl === "launcher" ? "launcher.html" : "player.html"
-  );
+  const entry = appsEntry();
   if (extname(entry).toLowerCase() !== ".html" || !statSync(entry).isFile()) {
     throw new Error("入口无效");
   }
@@ -801,24 +981,25 @@ export function openPluginPanel(pluginsDir: string, enabled: string[], pluginId:
   if (!win || win.isDestroyed()) {
     throw new Error("窗口不存在");
   }
-  const want = tpl === "launcher" ? clampPanelSize(280, 420) : clampPanelSize(280, 360);
-  if (panelWin && panelPluginId === pluginId && !panelWin.isDestroyed()) {
-    layoutPanel(panelWidth || want.width, panelHeight || want.height);
+  const size = appsHomeSize(listPluginApps(pluginsDir, enabled).length);
+  if (panelWin && appsBox && !panelWin.isDestroyed()) {
+    notifyAppsChanged();
     panelWin.show();
     panelWin.focus();
+    onPanelLayout?.();
     return;
   }
   closePluginPanel();
-  const size = want;
   panelWidth = size.width;
   panelHeight = size.height;
-  panelPluginId = pluginId;
+  panelPluginId = "";
+  appsBox = true;
   hookMainMove(win);
   const pet = win.getBounds();
   const view = new BrowserWindow({
     ...panelBoundsFromPet(pet, size),
     frame: false,
-    transparent: false,
+    transparent: true,
     hasShadow: false,
     alwaysOnTop: true,
     resizable: false,
@@ -826,7 +1007,7 @@ export function openPluginPanel(pluginsDir: string, enabled: string[], pluginId:
     show: false,
     webPreferences: {
       preload: join(__dirname, "../preload/pluginView.js"),
-      partition: `persist:hoshi-plugin-${pluginId}`,
+      partition: "persist:hoshi-apps",
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -839,18 +1020,23 @@ export function openPluginPanel(pluginsDir: string, enabled: string[], pluginId:
     if (panelWin === view) {
       panelWin = null;
       panelPluginId = "";
+      appsBox = false;
       panelWidth = 0;
       panelHeight = 0;
     }
   });
   layoutPanel(size.width, size.height);
-  bindWebContents(view.webContents, pluginId, plugin.dir);
+  bindPluginChrome(view.webContents);
   view.webContents.setAudioMuted(false);
   void view.webContents.loadFile(entry).then(() => {
     if (!view.isDestroyed()) {
       view.show();
     }
   });
+}
+
+export function openPluginPanel(pluginsDir: string, enabled: string[], _pluginId?: string): void {
+  openAppBox(pluginsDir, enabled);
 }
 
 export function openPluginWindow(
@@ -863,11 +1049,19 @@ export function openPluginWindow(
 }
 
 export function closePluginRuntime(pluginId: string): void {
+  if (pluginId === HOST_MUSIC_ID || pluginId === HOST_SCHEDULE_ID) {
+    return;
+  }
   disposePluginCaps(pluginId);
   disposePluginExecute(pluginId);
   pluginContents.delete(pluginId);
   pluginDirs.delete(pluginId);
-  if (panelPluginId === pluginId) {
+  if (panelWin && !panelWin.isDestroyed() && contentsToPlugin.get(panelWin.webContents) === pluginId) {
+    contentsToPlugin.delete(panelWin.webContents);
+  }
+  if (appsBox) {
+    notifyAppsChanged(pluginId);
+  } else if (panelPluginId === pluginId) {
     closePluginPanel();
   }
   const prefix = `${pluginId}:`;

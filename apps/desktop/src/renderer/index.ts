@@ -6,6 +6,7 @@ async function bootstrap() {
   const fanSessionBtn = document.getElementById("fan-session-btn") as HTMLButtonElement;
   const fanWorkbenchBtn = document.getElementById("fan-workbench-btn") as HTMLButtonElement;
   const fanSettingsBtn = document.getElementById("fan-settings-btn") as HTMLButtonElement;
+  const fanAppsBtn = document.getElementById("fan-apps-btn") as HTMLButtonElement;
   const dock = document.getElementById("dock") as HTMLDivElement;
   const sessionPanel = document.getElementById("session-panel") as HTMLDivElement;
   const sessionsList = document.getElementById("sessions-list") as HTMLDivElement;
@@ -145,34 +146,6 @@ async function bootstrap() {
     activeId: "" as string
   };
   const spriteCache = new Map<Emotion, string>();
-  const fanPluginActions = document.getElementById("fan-plugin-actions") as HTMLDivElement;
-  const refreshPluginFan = async (): Promise<void> => {
-    if (!fanPluginActions) {
-      return;
-    }
-    fanPluginActions.replaceChildren();
-    try {
-      const actions = await hoshi.listPluginActions();
-      for (const action of actions) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "fan-btn";
-        btn.textContent = action.label;
-        btn.addEventListener("click", () => {
-          retractFanMenu();
-          closePanel();
-          if (action.kind === "panel") {
-            void hoshi.openPluginPanel(action.pluginId);
-          } else {
-            void hoshi.openPluginWindow(action.pluginId, action.window);
-          }
-        });
-        fanPluginActions.appendChild(btn);
-      }
-    } catch {
-      return;
-    }
-  };
   const typewriterState: TypewriterState = {
     queue: [],
     running: false,
@@ -528,12 +501,16 @@ async function bootstrap() {
     void hoshi.openSettings();
   });
 
+  fanAppsBtn.addEventListener("click", () => {
+    retractFanMenu();
+    closePanel();
+    void hoshi.openAppBox();
+  });
+
   hoshi.onSettingsUpdated(() => {
     spriteCache.clear();
     void setPetEmotion(hoshi, pet, config.defaultEmotion, spriteCache);
-    void refreshPluginFan();
   });
-  void refreshPluginFan();
 
   newSessionBtn.addEventListener("click", async () => {
     try {
@@ -1220,24 +1197,66 @@ async function bootstrap() {
     status.textContent = "错误: 初始化会话失败";
   }
 
-  form.addEventListener("submit", async (evt) => {
-    evt.preventDefault();
+  const attachTtsSocket = (): Promise<void> => {
+    if (pttTtsWs) {
+      pttTtsWs.close();
+      pttTtsWs = null;
+    }
+    const socket = new WebSocket(agentWs("/v1/tts"));
+    socket.binaryType = "arraybuffer";
+    pttTtsWs = socket;
+    socket.addEventListener("message", (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        playLivePcm(new Uint8Array(event.data));
+        return;
+      }
+      if (typeof Blob !== "undefined" && event.data instanceof Blob) {
+        playLivePcm(event.data);
+        return;
+      }
+      if (typeof event.data !== "string") {
+        return;
+      }
+      try {
+        const rec = JSON.parse(event.data) as Record<string, unknown>;
+        if (rec.type === "pcm" && typeof rec.b64 === "string") {
+          playLivePcm(b64ToBytes(rec.b64));
+        }
+        if (rec.type === "error") {
+          status.textContent = `语音: ${String(rec.message ?? "错误")}`;
+          markTtsDone();
+        }
+        if (rec.type === "tts_done") {
+          markTtsDone();
+        }
+      } catch {
+        // ignore
+      }
+    });
+    return new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve());
+      socket.addEventListener("error", () => reject(new Error("tts ws failed")));
+    });
+  };
+
+  const runAssistantTurn = async (message: string, speak: boolean, focusInput: boolean): Promise<void> => {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return;
+    }
     unlockTtsCtx();
     if (liveActive) {
       await stopLive();
     }
-    const message = input.value.trim();
-    if (!message) {
-      return;
+    if (focusInput) {
+      showChatPanel();
+    } else {
+      state.panelOpen = true;
+      retractFanMenu();
+      openDock(dock);
+      sessionPanel.classList.add("hidden");
+      setChatAreaVisible(true);
     }
-
-    const shouldSpeak =
-      pttSpeakNext &&
-      ((await hoshi.getSettings()) as { voice?: { ttsEnabled?: boolean } }).voice?.ttsEnabled !==
-        false;
-    pttSpeakNext = false;
-    input.value = "";
-    showChatPanel();
     clearFadeTimer();
     clearPanelIdleCloseTimer();
     activeRunId += 1;
@@ -1245,62 +1264,24 @@ async function bootstrap() {
     typewriterState.sessionId = runId;
     typewriterState.doneReceived = false;
     typewriterState.queue = [];
-    ttsAwaiting = shouldSpeak;
+    ttsAwaiting = speak;
     sendBtn.disabled = true;
     pttBtn.disabled = true;
     status.textContent = "生成中";
-    let sessionId = "";
-
+    let openedTts = false;
     try {
-      sessionId = await ensureSession();
-      if (shouldSpeak) {
-        if (pttTtsWs) {
-          pttTtsWs.close();
-          pttTtsWs = null;
-        }
-        const socket = new WebSocket(agentWs("/v1/tts"));
-        socket.binaryType = "arraybuffer";
-        pttTtsWs = socket;
-        await new Promise<void>((resolve, reject) => {
-          socket.addEventListener("open", () => resolve());
-          socket.addEventListener("error", () => reject(new Error("tts ws failed")));
-        });
-        socket.addEventListener("message", (event) => {
-          if (event.data instanceof ArrayBuffer) {
-            playLivePcm(new Uint8Array(event.data));
-            return;
-          }
-          if (typeof Blob !== "undefined" && event.data instanceof Blob) {
-            playLivePcm(event.data);
-            return;
-          }
-          if (typeof event.data !== "string") {
-            return;
-          }
-          try {
-            const rec = JSON.parse(event.data) as Record<string, unknown>;
-            if (rec.type === "pcm" && typeof rec.b64 === "string") {
-              playLivePcm(b64ToBytes(rec.b64));
-            }
-            if (rec.type === "error") {
-              status.textContent = `语音: ${String(rec.message ?? "错误")}`;
-              markTtsDone();
-            }
-            if (rec.type === "tts_done") {
-              markTtsDone();
-            }
-          } catch {
-            // ignore
-          }
-        });
+      const sessionId = await ensureSession();
+      if (speak) {
+        openedTts = true;
+        await attachTtsSocket();
       }
-      await hoshi.chat({ message, sessionId }, (event: AgentEvent) => {
+      await hoshi.chat({ message: trimmed, sessionId }, (event: AgentEvent) => {
         consumeEvent(event, {
           onSentence: ({ text, emotion }) => {
             clearFadeTimer();
             typewriterState.queue.push({ text, emotion });
             void processTypewriterQueue(runId);
-            if (shouldSpeak && pttTtsWs && pttTtsWs.readyState === WebSocket.OPEN) {
+            if (speak && pttTtsWs && pttTtsWs.readyState === WebSocket.OPEN) {
               pttTtsWs.send(JSON.stringify({ type: "speak", text }));
             }
           },
@@ -1311,7 +1292,7 @@ async function bootstrap() {
             typewriterState.doneReceived = true;
             void finalizeDoneIfReady(runId);
             void refreshSessions();
-            if (shouldSpeak && pttTtsWs && pttTtsWs.readyState === WebSocket.OPEN) {
+            if (speak && pttTtsWs && pttTtsWs.readyState === WebSocket.OPEN) {
               pttTtsWs.send(JSON.stringify({ type: "finish" }));
             }
           },
@@ -1324,7 +1305,7 @@ async function bootstrap() {
             void setPetEmotion(hoshi, pet, config.defaultEmotion, spriteCache);
             resetPanelIdleCloseTimer();
             markTtsDone();
-            if (shouldSpeak) {
+            if (openedTts) {
               pttTtsWs?.close();
               pttTtsWs = null;
             }
@@ -1339,7 +1320,7 @@ async function bootstrap() {
       status.textContent = `错误: ${msg}`;
       void setPetEmotion(hoshi, pet, config.defaultEmotion, spriteCache);
       markTtsDone();
-      if (shouldSpeak) {
+      if (openedTts) {
         pttTtsWs?.close();
         pttTtsWs = null;
       }
@@ -1347,6 +1328,21 @@ async function bootstrap() {
       sendBtn.disabled = false;
       pttBtn.disabled = false;
     }
+  };
+
+  form.addEventListener("submit", async (evt) => {
+    evt.preventDefault();
+    const message = input.value.trim();
+    if (!message) {
+      return;
+    }
+    const shouldSpeak =
+      pttSpeakNext &&
+      ((await hoshi.getSettings()) as { voice?: { ttsEnabled?: boolean } }).voice?.ttsEnabled !==
+        false;
+    pttSpeakNext = false;
+    input.value = "";
+    await runAssistantTurn(message, shouldSpeak, true);
   });
 
   input.addEventListener("input", () => {

@@ -23,8 +23,9 @@ import {
   closePluginRuntime,
   configurePluginHost,
   listPluginFanActions,
+  notifyAppsChanged,
   notifyPluginKv,
-  openPluginPanel,
+  openAppBox,
   openPluginWindow,
   openHostAppName,
   listHostApps,
@@ -38,6 +39,8 @@ import {
 } from "./pluginCaps";
 import { configureIsolatedExecute, isolatedPluginRun } from "./pluginExecuteHost";
 import { augmentedPath } from "./envPath";
+import { configureRemindToast, relayoutRemindToast } from "./remindToast";
+import { onScheduleEventsChanged, startScheduleReminders, stopScheduleReminders } from "./scheduleRemind";
 import {
   createSandboxPlugin,
   uninstallPlugin,
@@ -138,6 +141,15 @@ async function bootstrap() {
     storageDir: pluginStorageDir,
     getMainWindow: () => mainWindow,
     windowSize: WINDOW_SIZE,
+    getTheme: () => resolveActiveTheme(pluginsDir, settings.plugins.enabled),
+    getPluginsDir: () => pluginsDir,
+    getEnabled: () => settings.plugins.enabled,
+    onPanelLayout: () => relayoutRemindToast(),
+    onHostKvSet: onScheduleEventsChanged
+  });
+  configureRemindToast({
+    getPluginsDir: () => pluginsDir,
+    getEnabled: () => settings.plugins.enabled,
     getTheme: () => resolveActiveTheme(pluginsDir, settings.plugins.enabled)
   });
   configureIsolatedExecute({
@@ -159,6 +171,7 @@ async function bootstrap() {
         win.webContents.send("hoshi:settings-updated", settings);
       }
     }
+    notifyAppsChanged();
   };
   const { server, persona, applySettings, authToken, mcpReady, close, executeByPluginId, listMcpServers, reloadMcp } =
     createAgentServer({
@@ -171,7 +184,10 @@ async function bootstrap() {
     mcpPath,
     pathEnv: augmentedPath(),
     storageDir: pluginStorageDir,
-    onPluginKvSet: notifyPluginKv,
+    onPluginKvSet: (pluginId, key, value) => {
+      notifyPluginKv(pluginId, key, value);
+      onScheduleEventsChanged(pluginId, key);
+    },
     openExternal: openHostAppName,
     listApps: listHostApps,
     pickFiles: (opts) => pickHostFiles(opts, mainWindow),
@@ -780,8 +796,11 @@ async function bootstrap() {
     openPluginWindow(pluginsDir, settings.plugins.enabled, String(record.pluginId ?? ""), String(record.window ?? ""));
   });
 
-  ipcMain.handle("hoshi:open-plugin-panel", (_event, pluginId: unknown) => {
-    openPluginPanel(pluginsDir, settings.plugins.enabled, String(pluginId ?? ""));
+  ipcMain.handle("hoshi:open-plugin-panel", () => {
+    openAppBox(pluginsDir, settings.plugins.enabled);
+  });
+  ipcMain.handle("hoshi:open-app-box", () => {
+    openAppBox(pluginsDir, settings.plugins.enabled);
   });
 
   ipcMain.handle("hoshi:set-ignore-mouse-events", (_event, ignore: boolean) => {
@@ -829,8 +848,12 @@ async function bootstrap() {
 
   await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
+  startScheduleReminders({
+    storageDir: pluginStorageDir
+  });
   mainWindow.on("closed", () => {
     mainWindow = null;
+    stopScheduleReminders();
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       settingsWindow.close();
     }

@@ -1,8 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
+type ThemeTokens = { bg: string; font: string; dialog: string; menu: string; sound: string };
+
 type HoshiPluginApi = {
   close: () => void;
   setPanelSize: (size: [number, number]) => Promise<void>;
+  setBoxSize: (size: [number, number]) => Promise<void>;
   pathForFile: (file: File) => string;
   pick: (opts?: {
     multiple?: boolean;
@@ -15,7 +18,20 @@ type HoshiPluginApi = {
   openExternal: (target: string) => Promise<string>;
   slots: () => Promise<{ title: string; multiple: boolean; filters: { name: string; extensions: string[] }[] }>;
   layout: () => Promise<{ nodes: { id: string; type: string; x: number; y: number; w: number; h: number; src?: string; text?: string }[] }>;
-  theme: () => Promise<{ bg: string; font: string; dialog: string; menu: string; sound: string } | null>;
+  theme: () => Promise<ThemeTokens | null>;
+  listPluginApps: () => Promise<{
+    apps: { pluginId: string; title: string; template: "panel" | "launcher" | "music" | "schedule"; icon: "music" | "panel" | "launcher" | "schedule" }[];
+    size: { width: number; height: number };
+  }>;
+  activate: (pluginId: string) => Promise<{
+    pluginId: string;
+    template: "panel" | "launcher" | "music" | "schedule";
+    size: { width: number; height: number };
+  }>;
+  probeTracks: (paths: string[]) => Promise<
+    { path: string; title: string; artist: string; album: string; picture: string | null }[]
+  >;
+  onAppsChanged: (cb: (removedId: string) => void) => () => void;
   storage: {
     get: (key: string) => Promise<string | null>;
     set: (key: string, value: unknown) => Promise<void>;
@@ -33,6 +49,8 @@ contextBridge.exposeInMainWorld("acquireHoshiApi", (): HoshiPluginApi => {
       },
       setPanelSize: (size) =>
         ipcRenderer.invoke("hoshi:plugin-panel-size", { size }) as Promise<void>,
+      setBoxSize: (size) =>
+        ipcRenderer.invoke("hoshi:apps-set-size", { size }) as Promise<void>,
       pathForFile: (file: File) => {
         try {
           return webUtils.getPathForFile(file) || "";
@@ -62,13 +80,31 @@ contextBridge.exposeInMainWorld("acquireHoshiApi", (): HoshiPluginApi => {
           nodes: { id: string; type: string; x: number; y: number; w: number; h: number; src?: string; text?: string }[];
         }>,
       theme: () =>
-        ipcRenderer.invoke("hoshi:plugin-theme") as Promise<{
-          bg: string;
-          font: string;
-          dialog: string;
-          menu: string;
-          sound: string;
-        } | null>,
+        ipcRenderer.invoke("hoshi:plugin-theme") as Promise<ThemeTokens | null>,
+      listPluginApps: () =>
+        ipcRenderer.invoke("hoshi:list-plugin-apps") as Promise<{
+          apps: { pluginId: string; title: string; template: "panel" | "launcher" | "music" | "schedule"; icon: "music" | "panel" | "launcher" | "schedule" }[];
+          size: { width: number; height: number };
+        }>,
+      activate: (pluginId: string) =>
+        ipcRenderer.invoke("hoshi:plugin-activate", pluginId) as Promise<{
+          pluginId: string;
+          template: "panel" | "launcher" | "music" | "schedule";
+          size: { width: number; height: number };
+        }>,
+      probeTracks: (paths: string[]) =>
+        ipcRenderer.invoke("hoshi:music-probe", paths) as Promise<
+          { path: string; title: string; artist: string; album: string; picture: string | null }[]
+        >,
+      onAppsChanged: (cb: (removedId: string) => void) => {
+        const handler = (_event: unknown, payload: { removedId?: unknown }) => {
+          cb(String(payload?.removedId ?? ""));
+        };
+        ipcRenderer.on("hoshi:apps-changed", handler);
+        return () => {
+          ipcRenderer.removeListener("hoshi:apps-changed", handler);
+        };
+      },
       storage: {
         get: (key: string) => ipcRenderer.invoke("hoshi:plugin-kv-get", key) as Promise<string | null>,
         set: async (key: string, value: unknown) => {
