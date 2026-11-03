@@ -25,4 +25,23 @@ describe("isKnowledgeHitOnTopic", () => {
     expect(queryTopicGrams("猫").length).toBeLessThan(2);
     expect(isKnowledgeHitOnTopic("猫", "狗喜欢跑步")).toBe(true);
   });
+
+  it("页表问句能对上只含页表的中文段", () => {
+    expect(isKnowledgeHitOnTopic("操作系统里的页表概念", "页表把虚拟地址翻译成物理地址。")).toBe(true);
+  });
+
+  it("页表问句能对上英文 page table 讲义", () => {
+    expect(
+      isKnowledgeHitOnTopic(
+        "操作系统里的页表概念",
+        "A page table maps virtual addresses to physical frames."
+      )
+    ).toBe(true);
+  });
+
+  it("文件系统讲义不能当成页表答案", () => {
+    expect(isKnowledgeHitOnTopic("操作系统里的页表概念", "文件系统用 inode 记录文件元数据。")).toBe(
+      false
+    );
+  });
 });

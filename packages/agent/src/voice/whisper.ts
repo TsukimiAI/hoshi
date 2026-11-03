@@ -140,8 +140,12 @@ export async function transcribePcm16WithWhisper(
   return transcribeWithWhisper(voice, wav, signal);
 }
 
+const OVERFLOW_MAX_MS = 3000;
+
 export class WhisperAsrClient {
   private chunks: Buffer[] = [];
+  private overflow: Buffer[] = [];
+  private overflowMs = 0;
   private speaking = false;
   private silenceMs = 0;
   private speechMs = 0;
@@ -165,11 +169,30 @@ export class WhisperAsrClient {
     }
   }
 
+  private pushOverflow(pcm: Buffer, frameMs: number): void {
+    this.overflow.push(pcm);
+    this.overflowMs += frameMs;
+    while (this.overflowMs > OVERFLOW_MAX_MS && this.overflow.length > 0) {
+      const dropped = this.overflow.shift();
+      if (!dropped) {
+        break;
+      }
+      this.overflowMs -= (Math.floor(dropped.length / 2) / 16000) * 1000;
+    }
+    if (this.overflowMs < 0) {
+      this.overflowMs = 0;
+    }
+  }
+
   sendPcm(pcm: Buffer): void {
-    if (this.closed || this.busy || pcm.length < 2) {
+    if (this.closed || pcm.length < 2) {
       return;
     }
     const frameMs = (Math.floor(pcm.length / 2) / 16000) * 1000;
+    if (this.busy) {
+      this.pushOverflow(pcm, frameMs);
+      return;
+    }
     const loud = pcmRmsInt16(pcm) >= 0.02;
     if (loud) {
       this.speaking = true;
@@ -214,11 +237,24 @@ export class WhisperAsrClient {
       // ignore one-shot fail
     } finally {
       this.busy = false;
+      if (this.overflow.length > 0 && !this.closed) {
+        this.chunks = this.overflow.concat(this.chunks);
+        this.speechMs = this.overflowMs;
+        this.speaking = this.speechMs > 0;
+        this.overflow = [];
+        this.overflowMs = 0;
+        this.silenceMs = 0;
+        if (this.speechMs >= 400) {
+          void this.flush();
+        }
+      }
     }
   }
 
   close(): void {
     this.closed = true;
     this.chunks = [];
+    this.overflow = [];
+    this.overflowMs = 0;
   }
 }

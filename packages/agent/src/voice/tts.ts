@@ -48,8 +48,8 @@ class DashscopeTtsEngine implements TtsEngine {
     }
   }
 
-  async finish(): Promise<void> {
-    this.client.finish();
+  finish(): Promise<void> {
+    return this.client.finish();
   }
 
   cancel(): void {

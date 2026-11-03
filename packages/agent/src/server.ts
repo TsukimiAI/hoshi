@@ -74,6 +74,17 @@ function writeSse(res: ServerResponse, event: AgentEvent): void {
   res.write(`data: ${JSON.stringify(event.data)}\n\n`);
 }
 
+/** POST /v1/chat：画布只跟 session.kind，语音不要走这条。 */
+export function resolveChatDeskMode(input: {
+  sessionKind: SessionKind;
+  workspace?: ChatRequestBody["workspace"];
+}): { ok: true; desk: boolean } | { ok: false; message: string } {
+  if (input.workspace === "desk" && input.sessionKind !== "desk") {
+    return { ok: false, message: "workspace desk requires a desk session" };
+  }
+  return { ok: true, desk: input.sessionKind === "desk" };
+}
+
 function writeJson(res: ServerResponse, statusCode: number, data: unknown): void {
   res.writeHead(statusCode, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
@@ -116,7 +127,6 @@ export function createAgentServer(config: AgentServerConfig) {
   const db = openDatabase(config.databasePath);
   migrateDb(db);
   const repo = new SessionRepo(db);
-  const memoryRepo = new MemoryRepo(db);
   const ready = Promise.resolve();
   const authToken = randomUUID();
   const llm = new OpenAiCompatClient(
@@ -142,6 +152,8 @@ export function createAgentServer(config: AgentServerConfig) {
     apiKey: lastSettings.knowledge.embedding.apiKey,
     baseUrl: lastSettings.knowledge.embedding.baseUrl
   }));
+  const memoryRepo = new MemoryRepo(db, embedding);
+  void memoryRepo.backfillEmbeddings().catch(() => undefined);
   const rerank = new DashScopeRerank(() => ({
     apiKey: lastSettings.knowledge.rerank.apiKey || lastSettings.model.apiKey,
     baseUrl: lastSettings.knowledge.rerank.baseUrl,
@@ -780,7 +792,12 @@ export function createAgentServer(config: AgentServerConfig) {
       }
 
       knowledgeHost.takeCitations();
-      const desk = body.workspace === "desk";
+      const mode = resolveChatDeskMode({ sessionKind: session.kind, workspace: body.workspace });
+      if (!mode.ok) {
+        writeSse(res, { event: "error", data: { message: mode.message } });
+        return;
+      }
+      const desk = mode.desk;
       const hint = desk ? String(body.message ?? "") : "";
       canvasHost.setEnabled(desk, sessionId);
       webHost.setEnabled(desk);
@@ -814,7 +831,7 @@ export function createAgentServer(config: AgentServerConfig) {
           signal: turnAbort.signal,
           canvasPrompt: desk ? `${CANVAS_USAGE_PROMPT}\n${canvasHost.inventoryPrompt() ?? ""}` : undefined,
           images,
-          workspace: body.workspace,
+          workspace: desk ? "desk" : undefined,
           commitCanvas: desk
             ? async ({ turnId, sessionId: sid, userMessageId, steps }) => {
                 await canvasHost.flushPortraits(sid);
@@ -824,8 +841,15 @@ export function createAgentServer(config: AgentServerConfig) {
                   userMessageId,
                   steps: steps ?? []
                 });
-                const items = canvasRepo.list(sid);
-                const document = { version: 1 as const, turnId, sessionId: sid, items };
+                const validationError = canvasHost.takeValidationError();
+                const items = validationError ? [] : canvasRepo.list(sid);
+                const document = {
+                  version: 1 as const,
+                  turnId,
+                  sessionId: sid,
+                  items,
+                  ...(validationError ? { validationError } : {})
+                };
                 canvasRepo.saveSnapshot({
                   turnId,
                   sessionId: sid,
@@ -833,7 +857,7 @@ export function createAgentServer(config: AgentServerConfig) {
                   document
                 });
                 canvasHost.takeChanges();
-                return { items };
+                return validationError ? { items, validationError } : { items };
               }
             : undefined
         })) {

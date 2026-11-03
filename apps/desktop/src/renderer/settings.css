@@ -270,6 +270,15 @@ textarea.short {
   min-width: 0;
 }
 
+.memory-ack {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef1fb;
+  color: #8a5a2b;
+  font-size: 11px;
+}
+
 .memory-kind,
 .memory-group {
   font-size: 12px;

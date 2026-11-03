@@ -9,6 +9,13 @@ describe("thumbnailFromWikiSummary", () => {
       })
     ).toBe("https://upload.wikimedia.org/a.jpg");
     expect(thumbnailFromWikiSummary({ thumbnail: { source: "http://insecure" } })).toBeNull();
+    expect(
+      thumbnailFromWikiSummary({
+        thumbnail: {
+          source: "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/X.jpg/330px-X.jpg"
+        }
+      })
+    ).toBe("https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/X.jpg/330px-X.jpg");
   });
 });
 

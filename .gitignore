@@ -21,3 +21,4 @@ yarn-error.log*
 
 apps/desktop/vendor/whisper/**
 .electron-cache
+packages/agent/eval-runs/

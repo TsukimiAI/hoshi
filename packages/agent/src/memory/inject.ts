@@ -1,151 +1,111 @@
-import type { MemoryItem } from "@hoshi/shared";
-import { normalizeMemoryText } from "./extract";
+import type { MemoryItem, MemoryMeta } from "@hoshi/shared";
+import { memoryFactKey, normalizeMemoryText } from "./extract";
 
 export const MEMORY_INJECT_MAX = 12;
 export const MEMORY_INJECT_MAX_CHARS = 960;
 export const MEMORY_CORE_MAX = 6;
-export const MEMORY_OVERLAP_MAX = 6;
+export const MEMORY_CORE_IDENTITY_MAX = 3;
+export const MEMORY_CORE_AGREEMENT_MAX = 3;
+export const MEMORY_ARCHIVE_MAX = 6;
+export const MEMORY_ARCHIVE_MIN_SCORE = 0.4;
+export const MEMORY_ARCHIVE_SCORE_MARGIN = 0.07;
+export const MEMORY_INJECT_LINE_MAX = 160;
+export const MEMORY_QUERY_EMBED_TIMEOUT_MS = 4000;
 
-const STOP = ["老师", "星奈", "的", "了", "我", "你", "是"];
+const ARCHIVE_KINDS = new Set(["preference", "habit", "other"]);
 
-function contentText(text: string): string {
-  let n = normalizeMemoryText(text);
-  for (const word of STOP) {
-    n = n.split(word).join("");
-  }
-  return n;
-}
-
-function grams(text: string): Set<string> {
-  const n = contentText(text);
-  const set = new Set<string>();
-  for (let i = 0; i < n.length - 1; i += 1) {
-    set.add(n.slice(i, i + 2));
-  }
-  return set;
-}
-
-export function memoryOverlapsQuery(userText: string, memoryText: string): boolean {
-  const a = contentText(userText);
-  const b = contentText(memoryText);
-  if (!a || !b) {
-    return false;
-  }
-  if (a.includes(b) || b.includes(a)) {
-    return true;
-  }
-    const gb = grams(memoryText);
-    const gq = grams(userText);
-    let shared = 0;
-    for (const g of gq) {
-      if (gb.has(g)) {
-        shared += 1;
-      }
-    }
-    if (shared >= 2) {
-      return true;
-    }
-  if (a.length <= 4) {
-    const need = Math.min(2, a.length);
-    let hit = 0;
-    for (const ch of a) {
-      if (b.includes(ch)) {
-        hit += 1;
-        if (hit >= need) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
-}
-
-export function memoryRetrieveScore(userText: string, memoryText: string): number {
-  const a = contentText(userText);
-  const b = contentText(memoryText);
-  if (!a || !b) {
-    return 0;
-  }
-  if (a.includes(b) || b.includes(a)) {
-    return 3;
-  }
-  const gq = grams(userText);
-  const gb = grams(memoryText);
-  if (gq.size === 0 || gb.size === 0) {
-    return 0;
-  }
-  let shared = 0;
-  for (const g of gq) {
-    if (gb.has(g)) {
-      shared += 1;
-    }
-  }
-  const jaccard = shared / (gq.size + gb.size - shared);
-  let charHit = 0;
-  if (a.length <= 4) {
-    for (const ch of a) {
-      if (b.includes(ch)) {
-        charHit += 1;
-      }
-    }
-  }
-  return jaccard + charHit / Math.max(a.length, 1);
+export interface MemoryArchiveHit {
+  id: string;
+  score: number;
 }
 
 function byUpdatedDesc(a: MemoryItem, b: MemoryItem): number {
   return b.updatedAt.localeCompare(a.updatedAt);
 }
 
-export function selectMemoriesForInject(items: MemoryItem[], userText: string): MemoryItem[] {
-  const active = items.filter((item) => item.status === "active");
+function byNameThenUpdated(a: MemoryItem, b: MemoryItem): number {
+  const an = a.topic === "name" ? 1 : 0;
+  const bn = b.topic === "name" ? 1 : 0;
+  if (an !== bn) {
+    return bn - an;
+  }
+  return byUpdatedDesc(a, b);
+}
+
+function pickCoreKind(items: MemoryItem[], kind: "identity" | "agreement", max: number): MemoryItem[] {
+  return items
+    .filter((item) => item.status === "active" && item.kind === kind)
+    .sort(byNameThenUpdated)
+    .slice(0, max);
+}
+
+export function selectCoreMemories(items: MemoryItem[]): MemoryItem[] {
+  return [...pickCoreKind(items, "identity", MEMORY_CORE_IDENTITY_MAX), ...pickCoreKind(items, "agreement", MEMORY_CORE_AGREEMENT_MAX)].slice(
+    0,
+    MEMORY_CORE_MAX
+  );
+}
+
+export function selectArchiveMemories(items: MemoryItem[], hits: MemoryArchiveHit[]): MemoryItem[] {
+  const byId = new Map(items.filter((item) => item.status === "active").map((item) => [item.id, item]));
+  const ranked = [...hits].sort((a, b) => b.score - a.score);
   const picked: MemoryItem[] = [];
   const used = new Set<string>();
-
-  const core = active
-    .filter((item) => item.kind === "identity" || item.kind === "agreement")
-    .sort(byUpdatedDesc);
-  for (const item of core) {
-    if (picked.length >= MEMORY_CORE_MAX) {
-      break;
+  const best = ranked.find((hit) => {
+    const item = byId.get(hit.id);
+    return item && ARCHIVE_KINDS.has(item.kind) && hit.score >= MEMORY_ARCHIVE_MIN_SCORE;
+  })?.score;
+  for (const hit of ranked) {
+    if (hit.score < MEMORY_ARCHIVE_MIN_SCORE) {
+      continue;
+    }
+    if (best !== undefined && hit.score <= best - MEMORY_ARCHIVE_SCORE_MARGIN) {
+      continue;
+    }
+    const item = byId.get(hit.id);
+    if (!item || used.has(item.id) || !ARCHIVE_KINDS.has(item.kind)) {
+      continue;
     }
     used.add(item.id);
     picked.push(item);
-  }
-
-  const overlap = active
-    .filter(
-      (item) =>
-        !used.has(item.id) &&
-        (item.kind === "preference" || item.kind === "habit" || item.kind === "other") &&
-        memoryOverlapsQuery(userText, item.text)
-    )
-    .sort((left, right) => {
-      const score = memoryRetrieveScore(userText, right.text) - memoryRetrieveScore(userText, left.text);
-      if (score !== 0) {
-        return score;
-      }
-      return byUpdatedDesc(left, right);
-    });
-  let overlapCount = 0;
-  for (const item of overlap) {
-    if (picked.length >= MEMORY_INJECT_MAX || overlapCount >= MEMORY_OVERLAP_MAX) {
+    if (picked.length >= MEMORY_ARCHIVE_MAX) {
       break;
     }
-    used.add(item.id);
-    picked.push(item);
-    overlapCount += 1;
   }
   return picked;
 }
 
-export function buildMemoryInjectPrompt(texts: string[]): string | null {
-  const lines: string[] = [];
+export function selectMemoriesForInject(
+  items: MemoryItem[],
+  _userText?: string,
+  archiveHits?: MemoryArchiveHit[]
+): MemoryItem[] {
+  const core = selectCoreMemories(items);
+  const used = new Set(core.map((item) => item.id));
+  const archive = selectArchiveMemories(items, archiveHits ?? []).filter((item) => !used.has(item.id));
+  return [...core, ...archive].slice(0, MEMORY_INJECT_MAX);
+}
+
+export function clipMemoryLine(text: string, max = MEMORY_INJECT_LINE_MAX): string {
+  const trimmed = text.replace(/\s+/g, " ").trim();
+  if (trimmed.length <= max) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, max - 1)}…`;
+}
+
+export type MemoryInjectLine = string | { text: string; meta?: MemoryMeta | null };
+
+function injectParts(items: MemoryInjectLine[]): { personal: string[]; notes: string[] } {
+  const personal: string[] = [];
+  const notes: string[] = [];
   let used = 0;
-  for (const raw of texts) {
-    if (lines.length >= MEMORY_INJECT_MAX) {
+  for (const raw of items) {
+    if (personal.length + notes.length >= MEMORY_INJECT_MAX) {
       break;
     }
-    const text = raw.replace(/\s+/g, " ").trim();
+    const rec = typeof raw === "string" ? { text: raw, knowledge: false } : { text: raw.text, knowledge: raw.meta?.source === "knowledge" };
+    const text = clipMemoryLine(rec.text);
     if (!text) {
       continue;
     }
@@ -153,12 +113,50 @@ export function buildMemoryInjectPrompt(texts: string[]): string | null {
       break;
     }
     used += text.length;
-    lines.push(text);
+    (rec.knowledge ? notes : personal).push(text);
   }
+  return { personal, notes };
+}
+
+function section(title: string, lines: string[]): string | null {
   if (lines.length === 0) {
     return null;
   }
-  return `关于老师的长期记忆：\n${lines.map((line) => `- ${line}`).join("\n")}`;
+  return `${title}\n${lines.map((line) => `- ${line}`).join("\n")}`;
+}
+
+export function buildMemoryInjectPrompt(items: MemoryInjectLine[]): string | null {
+  const { personal, notes } = injectParts(items);
+  const blocks = [section("关于老师的长期记忆：", personal), section("老师摘录的笔记，不是老师本人的话：", notes)].filter(
+    (item): item is string => Boolean(item)
+  );
+  return blocks.length > 0 ? blocks.join("\n") : null;
+}
+
+const ACK_TONE = /记|叫|喜欢|习惯/;
+const ACK_NAME_SHORT = 12;
+
+function isNameMemory(text: string): boolean {
+  return /叫|名字|称呼/.test(text);
+}
+
+export function mentionsMemory(reply: string, memoryText: string): boolean {
+  const spoken = normalizeMemoryText(reply);
+  if (!spoken) {
+    return false;
+  }
+  const key = memoryFactKey(memoryText);
+  if (!key || !spoken.includes(key)) {
+    return false;
+  }
+  if (isNameMemory(memoryText)) {
+    return spoken.length <= ACK_NAME_SHORT || ACK_TONE.test(spoken);
+  }
+  return key.length >= 2 && ACK_TONE.test(spoken);
+}
+
+export function selectAckedMemoryIds(reply: string, items: Array<{ id: string; text: string }>): string[] {
+  return items.filter((item) => mentionsMemory(reply, item.text)).map((item) => item.id);
 }
 
 export function buildMemoryAckPrompt(texts: string[]): string | null {

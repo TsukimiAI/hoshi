@@ -10,6 +10,8 @@
     "dev": "pnpm --filter @hoshi/desktop dev",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
+    "eval": "vitest run --config vitest.eval.config.ts",
+    "eval:live": "HOSHI_EVAL_LIVE=1 vitest run --config vitest.eval.config.ts",
     "eval:memory": "HOSHI_MEMORY_EVAL=1 vitest run packages/agent/src/memory/eval/live.test.ts",
     "eval:kb": "vitest run packages/agent/src/knowledge/eval.test.ts",
     "eval:kb-ragas": "HOSHI_KB_EVAL=1 vitest run packages/agent/src/knowledge/ragas.live.test.ts",

@@ -128,7 +128,7 @@ describe("fetchPublicPage", () => {
 });
 
 describe("WebToolHost", () => {
-  it("同一查询只打一次，任一条失败丢掉整批", async () => {
+  it("同一查询只打一次，单条失败不影响其它结果", async () => {
     const calls: string[] = [];
     const host = new WebToolHost(
       () => "key",
@@ -145,9 +145,31 @@ describe("WebToolHost", () => {
     expect(calls).toEqual(["one", "two"]);
     expect(ok).toContain("外部数据");
     expect(ok).toContain("https://x.com/one");
-    const failed = await host.execute("web_search", { queries: ["ok", "bad"] });
-    expect(failed).toContain("整批结果已丢弃");
+    const mixed = await host.execute("web_search", { queries: ["ok", "bad"] });
+    expect(mixed).toContain("https://x.com/ok");
+    expect(mixed).not.toContain("整批结果已丢弃");
+    const failed = await host.execute("web_search", { queries: ["bad"] });
+    expect(failed).toContain("联网失败");
     expect(failed).toContain("provider down");
+  });
+
+  it("fetch failed 会再试一次", async () => {
+    let tries = 0;
+    const host = new WebToolHost(
+      () => "key",
+      async () => {
+        tries += 1;
+        if (tries === 1) {
+          throw new Error("fetch failed");
+        }
+        return { hits: [{ url: "https://x.com/weather", title: "上海天气" }], optionalAnswer: "26℃" };
+      }
+    );
+    host.setEnabled(true);
+    const ok = await host.execute("web_search", { query: "上海天气" });
+    expect(tries).toBe(2);
+    expect(ok).toContain("上海天气");
+    expect(ok).toContain("26℃");
   });
 
   it("缺密钥时工具仍在，执行时报结构化错误", async () => {

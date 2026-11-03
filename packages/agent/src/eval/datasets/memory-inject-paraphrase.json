@@ -1,0 +1,74 @@
+{
+  "name": "memory-inject-paraphrase",
+  "version": "1",
+  "cases": [
+    {
+      "id": "m-drink-what",
+      "query": "喝什么",
+      "memories": [
+        { "id": "tea", "text": "老师平时喜欢喝红茶", "kind": "preference", "topic": "drink" },
+        { "id": "cilantro", "text": "老师不吃香菜", "kind": "preference", "topic": "food" }
+      ],
+      "expectIds": ["tea"]
+    },
+    {
+      "id": "m-afternoon",
+      "query": "下午茶喝点什么好",
+      "memories": [
+        { "id": "tea", "text": "老师平时喜欢喝红茶", "kind": "preference", "topic": "drink" }
+      ],
+      "expectIds": ["tea"]
+    },
+    {
+      "id": "m-beverage",
+      "query": "饮料偏好",
+      "memories": [
+        { "id": "tea", "text": "老师平时喜欢喝红茶", "kind": "preference", "topic": "drink" }
+      ],
+      "expectIds": ["tea"]
+    },
+    {
+      "id": "m-hot-drink",
+      "query": "想喝点热的",
+      "memories": [
+        { "id": "tea", "text": "老师平时喜欢喝红茶", "kind": "preference", "topic": "drink" },
+        { "id": "overtime", "text": "老师晚上经常加班", "kind": "habit", "topic": "schedule" }
+      ],
+      "expectIds": ["tea"]
+    },
+    {
+      "id": "m-tea-literal",
+      "query": "红茶还喝吗",
+      "memories": [
+        { "id": "tea", "text": "老师平时喜欢喝红茶", "kind": "preference", "topic": "drink" }
+      ],
+      "expectIds": ["tea"]
+    },
+    {
+      "id": "m-identity-core",
+      "query": "喝什么",
+      "memories": [
+        { "id": "name", "text": "老师叫韩", "kind": "identity", "topic": "name" },
+        { "id": "tea", "text": "老师平时喜欢喝红茶", "kind": "preference", "topic": "drink" }
+      ],
+      "expectIds": ["name", "tea"]
+    },
+    {
+      "id": "m-coffee-alt",
+      "query": "提神喝什么",
+      "memories": [
+        { "id": "coffee", "text": "老师讨厌咖啡", "kind": "preference", "topic": "drink" }
+      ],
+      "expectIds": ["coffee"]
+    },
+    {
+      "id": "m-overtime-when",
+      "query": "晚上一般忙不忙",
+      "memories": [
+        { "id": "overtime", "text": "老师晚上经常加班", "kind": "habit", "topic": "schedule" },
+        { "id": "tea", "text": "老师平时喜欢喝红茶", "kind": "preference", "topic": "drink" }
+      ],
+      "expectIds": ["overtime"]
+    }
+  ]
+}

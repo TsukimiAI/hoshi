@@ -335,6 +335,9 @@ async function bootstrap() {
       return;
     }
     typewriterState.doneReceived = false;
+    if (liveActive) {
+      return;
+    }
     status.textContent = "就绪";
     scheduleFadeAll(() => {
       void setPetEmotion(hoshi, pet, config.defaultEmotion, spriteCache);
@@ -734,8 +737,16 @@ async function bootstrap() {
   };
 
   let liveReconnects = 0;
-  let liveTtsPlaying = false;
-  let liveTtsStartedAt = 0;
+  let liveHoldMic = false;
+  let liveEpoch = 0;
+  let livePlayGen = 0;
+  let liveQueueAt = 0;
+  let liveSources: AudioBufferSourceNode[] = [];
+  let liveDrainTimer: number | null = null;
+  let liveDropTailUntil = 0;
+  let liveTtsRate = 22050;
+  let liveFlushEpoch = -1;
+  let liveBargeGate = createLiveBargeGate();
   let liveTtsCtx: AudioContext | null = null;
   let liveMic: MicCapture | null = null;
   let liveVoiceWs: WebSocket | null = null;
@@ -789,24 +800,94 @@ async function bootstrap() {
     });
   }
 
-  const stopLiveTts = (): void => {
-    liveTtsPlaying = false;
-    liveTtsStartedAt = 0;
+  const clearLiveDrain = (): void => {
+    if (liveDrainTimer !== null) {
+      window.clearTimeout(liveDrainTimer);
+      liveDrainTimer = null;
+    }
+  };
+
+  const stopLivePlayback = (natural: boolean): void => {
+    livePlayGen += 1;
+    clearLiveDrain();
+    for (const src of liveSources) {
+      try {
+        src.stop();
+      } catch {
+        // ignore
+      }
+    }
+    liveSources = [];
+    if (liveTtsCtx && liveTtsCtx.state !== "closed") {
+      liveQueueAt = liveTtsCtx.currentTime;
+    } else {
+      liveQueueAt = 0;
+    }
+    if (!natural) {
+      liveHoldMic = false;
+    }
+  };
+
+  const scheduleLiveDrain = (playGen: number, epoch: number): void => {
+    clearLiveDrain();
+    const ctx = liveTtsCtx;
+    if (!ctx || ctx.state === "closed") {
+      return;
+    }
+    const remainMs = Math.max(40, (liveQueueAt - ctx.currentTime) * 1000 + 40);
+    liveDrainTimer = window.setTimeout(() => {
+      liveDrainTimer = null;
+      if (playGen !== livePlayGen || epoch !== liveEpoch) {
+        return;
+      }
+      liveHoldMic = false;
+      if (liveVoiceWs && liveVoiceWs.readyState === WebSocket.OPEN) {
+        liveVoiceWs.send(JSON.stringify({ type: "tts_end", epoch }));
+      }
+    }, remainMs);
   };
 
   const playLivePcm = (data: ArrayBuffer | Blob | Uint8Array): void => {
-    const n =
+    const bytes =
       data instanceof Uint8Array
-        ? data.byteLength
+        ? data
         : data instanceof ArrayBuffer
-          ? data.byteLength
-          : 2;
-    if (n < 2) {
+          ? new Uint8Array(data)
+          : null;
+    if (!bytes || bytes.byteLength < 2) {
       return;
     }
-    liveTtsPlaying = true;
-    if (!liveTtsStartedAt) {
-      liveTtsStartedAt = Date.now();
+    if (!liveActive) {
+      return;
+    }
+    const ctx = unlockTtsCtx();
+    if (!ctx) {
+      return;
+    }
+    const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const pcm = new Int16Array(copy);
+    if (pcm.length === 0) {
+      return;
+    }
+    const floats = new Float32Array(pcm.length);
+    for (let i = 0; i < pcm.length; i += 1) {
+      floats[i] = pcm[i] / 32768;
+    }
+    const buffer = ctx.createBuffer(1, floats.length, liveTtsRate || 22050);
+    buffer.copyToChannel(floats, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    const startAt = Math.max(ctx.currentTime, liveQueueAt);
+    src.start(startAt);
+    liveQueueAt = startAt + buffer.duration;
+    liveSources.push(src);
+    src.onended = () => {
+      liveSources = liveSources.filter((item) => item !== src);
+    };
+    liveHoldMic = true;
+    if (liveFlushEpoch === liveEpoch) {
+      scheduleLiveDrain(livePlayGen, liveEpoch);
     }
   };
 
@@ -820,7 +901,9 @@ async function bootstrap() {
     liveActive = false;
     liveReconnects = 0;
     liveBtn.classList.remove("is-live");
-    stopLiveTts();
+    liveHoldMic = false;
+    liveDropTailUntil = 0;
+    stopLivePlayback(false);
     if (liveVoiceWs) {
       if (liveVoiceWs.readyState === WebSocket.OPEN) {
         try {
@@ -846,17 +929,23 @@ async function bootstrap() {
         return;
       }
       const resampled = resampleLinear(inputData, sampleRate, PTT_SAMPLE_RATE);
-      if (liveTtsPlaying && Date.now() - liveTtsStartedAt < 800) {
+      if (Date.now() < liveDropTailUntil) {
         return;
       }
-      if (liveTtsPlaying) {
-        if (pcmRms(resampled) < 0.06) {
-          return;
-        }
+      const frameMs = (resampled.length / PTT_SAMPLE_RATE) * 1000;
+      const tick = tickLiveBargeGate(liveBargeGate, pcmRms(resampled), frameMs, liveHoldMic);
+      if (tick.barge) {
+        stopLivePlayback(false);
+        liveDropTailUntil = Date.now() + LIVE_BARGE_TAIL_MS;
+        liveHoldMic = false;
+        liveBargeGate = createLiveBargeGate();
         if (liveVoiceWs && liveVoiceWs.readyState === WebSocket.OPEN) {
           liveVoiceWs.send(JSON.stringify({ type: "barge" }));
         }
-        stopLiveTts();
+        return;
+      }
+      if (!tick.send) {
+        return;
       }
       const pcm = floatToPcm16(resampled);
       if (liveVoiceWs && liveVoiceWs.readyState === WebSocket.OPEN) {
@@ -961,7 +1050,9 @@ async function bootstrap() {
       return;
     }
     if (typeof Blob !== "undefined" && event.data instanceof Blob) {
-      playLivePcm(event.data);
+      void event.data.arrayBuffer().then((buf) => {
+        playLivePcm(new Uint8Array(buf));
+      });
       return;
     }
     if (typeof event.data !== "string") {
@@ -979,6 +1070,9 @@ async function bootstrap() {
     }
     if (rec.type === "status") {
       const phase = String(rec.phase ?? "");
+      if (typeof rec.epoch === "number") {
+        liveEpoch = rec.epoch;
+      }
       if (phase === "idle_stop") {
         void stopLive();
         return;
@@ -989,8 +1083,15 @@ async function bootstrap() {
         typewriterState.doneReceived = false;
         typewriterState.queue = [];
         ttsAwaiting = ttsEnabled;
+        liveFlushEpoch = -1;
+        liveHoldMic = true;
+        liveBargeGate = createLiveBargeGate();
+        stopLivePlayback(false);
+        liveHoldMic = true;
       }
       if (phase === "listening") {
+        liveHoldMic = false;
+        liveDropTailUntil = 0;
         const asr = String(rec.asr ?? "");
         status.textContent = asr === "whisper" ? "实时: 聆听中（本机）" : "实时: 聆听中（云端流式）";
         return;
@@ -1002,12 +1103,34 @@ async function bootstrap() {
       status.textContent = map[phase] ?? `实时: ${phase}`;
       return;
     }
+    if (rec.type === "tts_format" && typeof rec.sampleRate === "number" && rec.sampleRate > 0) {
+      liveTtsRate = rec.sampleRate;
+      return;
+    }
+    if (rec.type === "tts_flush") {
+      if (typeof rec.epoch === "number") {
+        liveEpoch = rec.epoch;
+      }
+      liveFlushEpoch = liveEpoch;
+      liveHoldMic = true;
+      scheduleLiveDrain(livePlayGen, liveEpoch);
+      return;
+    }
+    if (rec.type === "final" && typeof rec.text === "string") {
+      const spoken = rec.text.trim();
+      if (spoken) {
+        appendStaticBubble(replies, spoken);
+      }
+      return;
+    }
     if (rec.type === "tts_done") {
+      liveHoldMic = false;
       markTtsDone();
       return;
     }
     if (rec.type === "error") {
       status.textContent = `实时: ${String(rec.message ?? "错误")}`;
+      liveHoldMic = false;
       markTtsDone();
       return;
     }
@@ -1068,6 +1191,10 @@ async function bootstrap() {
     clearPanelIdleCloseTimer();
     liveActive = true;
     liveReconnects = 0;
+    liveHoldMic = false;
+    liveEpoch = 0;
+    liveDropTailUntil = 0;
+    liveBargeGate = createLiveBargeGate();
     liveBtn.classList.add("is-live");
     status.textContent = "实时: 连接中";
     try {
@@ -1211,7 +1338,9 @@ async function bootstrap() {
         return;
       }
       if (typeof Blob !== "undefined" && event.data instanceof Blob) {
-        playLivePcm(event.data);
+        void event.data.arrayBuffer().then((buf) => {
+          playLivePcm(new Uint8Array(buf));
+        });
         return;
       }
       if (typeof event.data !== "string") {

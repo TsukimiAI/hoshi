@@ -31,6 +31,15 @@ describe("buildChatCompletionBody", () => {
     expect(body.tools).toBeUndefined();
   });
 
+  it("传入 temperature 时写入请求体", () => {
+    const body = buildChatCompletionBody("qwen", [{ role: "user", content: "hi" }], {
+      stream: false,
+      enableSearch: false,
+      temperature: 0
+    });
+    expect(body.temperature).toBe(0);
+  });
+
   it("enableSearch false 时不带联网", () => {
     const body = buildChatCompletionBody("qwen", [{ role: "user", content: "hi" }], {
       stream: false,

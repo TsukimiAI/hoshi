@@ -19,15 +19,21 @@ describe("chunkDocument", () => {
     expect(chunks[0].headingPath).toEqual(["第一章"]);
   });
 
+  it("短段一段一块", () => {
+    const paragraphs = Array.from({ length: 12 }, (_, i) => `第${i}段：一段完整短文。`);
+    const chunks = chunkDocument(paragraphs.join("\n\n"));
+    expect(chunks).toHaveLength(paragraphs.length);
+    expect(chunks.map((chunk) => chunk.text)).toEqual(paragraphs);
+  });
+
   it("段落对齐：正常段落不在中间截断", () => {
     const paragraphs = Array.from({ length: 40 }, (_, i) =>
       `第${i}段：这是一段用于测试分块的连续内容，内容完整且没有空行打断，长度适中。`
     );
     const chunks = chunkDocument(paragraphs.join("\n\n"));
-    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks).toHaveLength(paragraphs.length);
     for (let i = 0; i < chunks.length; i += 1) {
-      const lastParagraph = chunks[i].text.split("\n\n").pop() ?? "";
-      expect(paragraphs.includes(lastParagraph)).toBe(true);
+      expect(chunks[i].text).toBe(paragraphs[i]);
     }
   });
 

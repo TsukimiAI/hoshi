@@ -26,7 +26,7 @@ export interface LlmMessage {
 export function buildChatCompletionBody(
   model: string,
   messages: LlmMessage[],
-  options: { stream: boolean; tools?: LlmTool[]; enableSearch?: boolean }
+  options: { stream: boolean; tools?: LlmTool[]; enableSearch?: boolean; temperature?: number }
 ): Record<string, unknown> {
   const enableSearch = options.enableSearch !== false;
   const body: Record<string, unknown> = {
@@ -34,6 +34,9 @@ export function buildChatCompletionBody(
     stream: options.stream,
     messages
   };
+  if (typeof options.temperature === "number") {
+    body.temperature = options.temperature;
+  }
   if (enableSearch) {
     body.enable_search = true;
     body.extra_body = {
@@ -61,6 +64,7 @@ export type LlmCallOptions = {
   purpose?: UsagePurpose;
   sessionId?: string;
   model?: string;
+  temperature?: number;
 };
 
 export type UsageRecorder = (input: {
@@ -216,7 +220,8 @@ export class OpenAiCompatClient {
         buildChatCompletionBody(this.config.model, messages, {
           stream: false,
           tools,
-          enableSearch: options?.enableSearch
+          enableSearch: options?.enableSearch,
+          temperature: options?.temperature
         })
       )
     };

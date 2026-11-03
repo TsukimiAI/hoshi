@@ -17,7 +17,8 @@ export class FunAsrClient {
     private readonly onFinal: (text: string) => void,
     private readonly hotwords: string,
     private readonly vocabularyId: string,
-    private readonly onUsage?: (usage: LlmUsage) => void
+    private readonly onUsage?: (usage: LlmUsage) => void,
+    private readonly onFailed?: (error: Error) => void
   ) {}
 
   async start(): Promise<void> {
@@ -68,8 +69,12 @@ export class FunAsrClient {
             this.sendRunTask("");
             return;
           }
-          clearTimeout(timer);
-          reject(new Error("fun-asr task-failed"));
+          if (!this.started) {
+            clearTimeout(timer);
+            reject(new Error("fun-asr task-failed"));
+            return;
+          }
+          this.onFailed?.(new Error("fun-asr task-failed"));
         }
       });
     });

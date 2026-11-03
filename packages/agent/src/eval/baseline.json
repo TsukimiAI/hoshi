@@ -1,0 +1,25 @@
+{
+  "datasets": {
+    "router": "1",
+    "memory-inject-paraphrase": "1",
+    "kb-corpus": "1",
+    "kb-qrels": "1"
+  },
+  "embeddingModel": "text-embedding-v4",
+  "chatModel": "qwen3.8-flash",
+  "metrics": {
+    "router.web.accuracy": 0.975,
+    "router.kb.accuracy": 1,
+    "router.desk.accuracy": 0.975,
+    "memory.inject.precision": 1,
+    "memory.inject.recall": 1,
+    "kb.hit_at_k": 1,
+    "kb.mrr": 1,
+    "memory.extract.abstain": 1,
+    "memory.extract.must_hit": 1,
+    "memory.extract.update": 1,
+    "ragas.faithfulness": 0.975,
+    "ragas.answer_relevancy": 0.86,
+    "ragas.context_relevancy": 0.95
+  }
+}

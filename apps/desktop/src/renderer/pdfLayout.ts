@@ -164,7 +164,7 @@ function addTableSeparators(text: string): string {
   return out.join("\n");
 }
 
-// 渲染层无模块系统（classic <script>），函数以顶层声明暴露给 workbench.js，
+// classic <script> 加载；工作台 ESM 读 globalThis.hoshiPdfLayout，
 // 同时挂到 globalThis 供 vitest 侧引用（与 panelAction 同款模式）。
 (globalThis as unknown as {
   hoshiPdfLayout: {

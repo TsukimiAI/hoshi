@@ -12,6 +12,7 @@ import {
   knowledgeRoute,
   knowledgeTitleLookupKey
 } from "../retrieval/plan";
+import { isKnowledgeHitOnTopic } from "./relevance";
 import type { KnowledgeCapabilities, KnowledgeDocument, KnowledgeSearchHit, SearchTrace } from "./types";
 
 export const MAX_TEXT_CHARS = 2_000_000;
@@ -48,6 +49,14 @@ function isRetryable(error: unknown): boolean {
 function embedText(title: string, seg: ChunkSeg): string {
   const prefix = seg.headingPath.length > 0 ? `${title}｜${seg.headingPath.join(" > ")}` : title;
   return `《${prefix}》\n\n${seg.text}`;
+}
+
+function keepOnTopicHits(query: string, hits: KnowledgeSearchHit[]): KnowledgeSearchHit[] {
+  if (hits.length === 0) {
+    return hits;
+  }
+  const kept = hits.filter((hit) => isKnowledgeHitOnTopic(query, `${hit.documentTitle}\n${hit.text}`));
+  return kept.length > 0 ? kept : hits.slice(0, 1);
 }
 
 export class KnowledgeService {
@@ -281,7 +290,13 @@ export class KnowledgeService {
     throw lastError;
   }
 
-  private async runIngest(documentId: string, collectionId: string, title: string, text: string): Promise<boolean> {
+  private async runIngest(
+    documentId: string,
+    collectionId: string,
+    title: string,
+    text: string,
+    opts?: { skipDimReindex?: boolean }
+  ): Promise<boolean> {
     try {
       if (text.length > MAX_TEXT_CHARS) {
         throw new Error(`文本超过上限 ${MAX_TEXT_CHARS} 字符`);
@@ -312,7 +327,7 @@ export class KnowledgeService {
       }));
       await this.repo.insertChunks(documentId, collectionId, toInsert);
       await this.repo.updateDocumentStatus(documentId, "ready");
-      if (oldDim > 0 && oldDim !== dim) {
+      if (oldDim > 0 && oldDim !== dim && !opts?.skipDimReindex) {
         // 嵌入维度变化（换了模型）：vec 表已重建为空，立即重嵌既有文档，避免语义检索静默失效。
         await this.reindexAfterDimChange(dim);
       }
@@ -520,6 +535,10 @@ export class KnowledgeService {
       rerankMs = Date.now() - rerankStart;
     }
 
+    if (recallMode !== "summarize") {
+      finalHits = keepOnTopicHits(trimmed, finalHits);
+    }
+
     const toTrace = (hit: KnowledgeSearchHit): { chunkId: string; score: number; text: string } => ({
       chunkId: hit.chunkId,
       score: hit.score,
@@ -551,25 +570,53 @@ export class KnowledgeService {
   }
 
   async reindexAll(): Promise<{ chunks: number }> {
-    const chunks = await this.repo.listReindexableChunks();
-    if (chunks.length === 0) {
-      return { chunks: 0 };
+    const docs = await this.repo.listReadyDocuments();
+    let count = 0;
+    const leftover: Array<{
+      chunkId: string;
+      collectionId: string;
+      title: string;
+      text: string;
+      headingPath: string[];
+    }> = [];
+
+    for (const doc of docs) {
+      const source = await this.repo.getDocumentSource(doc.id);
+      if (source.trim()) {
+        const ok = await this.runIngest(doc.id, doc.collectionId, doc.title, source, { skipDimReindex: true });
+        if (ok) {
+          const { total } = await this.repo.listChunks(doc.id, 0, 1);
+          count += total;
+        }
+        continue;
+      }
+      leftover.push(...(await this.repo.listReindexableChunks(doc.id)));
     }
-    console.error(JSON.stringify({ src: "hoshi.kb", phase: "reindex", ok: true, chunks: chunks.length }));
-    const inputs = chunks.map((chunk) => embedText(chunk.title, { text: chunk.text, headingPath: chunk.headingPath }));
-    const vectors = await this.embedWithRetry(inputs);
-    if (vectors.length !== chunks.length || vectors.some((v) => v.length === 0)) {
-      throw new Error("嵌入结果不完整");
+
+    if (leftover.length > 0) {
+      console.error(
+        JSON.stringify({ src: "hoshi.kb", phase: "reindex", ok: true, chunks: leftover.length, mode: "embed_only" })
+      );
+      const inputs = leftover.map((chunk) =>
+        embedText(chunk.title, { text: chunk.text, headingPath: chunk.headingPath })
+      );
+      const vectors = await this.embedWithRetry(inputs);
+      if (vectors.length !== leftover.length || vectors.some((v) => v.length === 0)) {
+        throw new Error("嵌入结果不完整");
+      }
+      const dim = vectors[0].length;
+      ensureVectorTable(this.db, dim);
+      await this.repo.upsertVectors(
+        leftover.map((chunk, index) => ({
+          chunkId: chunk.chunkId,
+          collectionId: chunk.collectionId,
+          embedding: vectors[index]
+        }))
+      );
+      count += leftover.length;
     }
-    const dim = vectors[0].length;
-    ensureVectorTable(this.db, dim);
-    const entries = chunks.map((chunk, index) => ({
-      chunkId: chunk.chunkId,
-      collectionId: chunk.collectionId,
-      embedding: vectors[index]
-    }));
-    await this.repo.replaceAllVectors(entries);
-    return { chunks: chunks.length };
+
+    return { chunks: count };
   }
 
   getChunkContext(chunkId: string) {

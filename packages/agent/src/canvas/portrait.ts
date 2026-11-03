@@ -73,6 +73,9 @@ export function canonicalizeCanvasImageUrl(raw: string): string | null {
       return null;
     }
     url.hash = "";
+    if (url.hostname.toLowerCase() === "thumb.wikimedia.org") {
+      url.hostname = "upload.wikimedia.org";
+    }
     const host = url.hostname.toLowerCase();
     const allowedHost = IMAGE_HOSTS.some((item) => host === item || host.endsWith(`.${item}`));
     const imagePath = /\.(png|jpe?g|webp|gif|svg|bmp)(?:$|[!/?#])/i.test(url.pathname);

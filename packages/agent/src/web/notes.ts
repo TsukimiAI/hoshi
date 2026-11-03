@@ -8,12 +8,19 @@ const CORPUS_JUNK = /\/hdd\/|\/datasets\/|\.pdf\b|file:\/\//i;
 
 const ENCODED_PATH = /%(?:E[0-9A-F]|[89A-F][0-9A-F]){6,}/i;
 
+const SLOGAN =
+  /<center>|<\/center>|追求最|最鲜活|最实用|活\/用\/的\/新|追\/求/;
+
+const SOCIAL_JUNK = /网友|评论区|洗衣机|转盲了|假期该有的样子/;
+
 export function looksLikeSearchToolDump(text: string): boolean {
   return (
     SEARCH_DUMP.test(text) ||
     TOOL_TALK.test(text) ||
     CORPUS_JUNK.test(text) ||
     ENCODED_PATH.test(text) ||
+    SLOGAN.test(text) ||
+    SOCIAL_JUNK.test(text) ||
     (/https?:\/\/[^\s]+/i.test(text) && /\d+\.\s/.test(text))
   );
 }
@@ -23,12 +30,18 @@ function compactLen(text: string): number {
 }
 
 function isTitleOnlyChunk(text: string): boolean {
-  const t = text.trim();
-  if (!t || /搜词条/.test(t) || SEARCH_DUMP.test(t)) {
+  const t = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  if (!t || /搜词条/.test(t) || SEARCH_DUMP.test(t) || SLOGAN.test(t) || SOCIAL_JUNK.test(t)) {
+    return true;
+  }
+  if (/[\/|]{2,}/.test(t.replace(/\s/g, "")) && !/\d/.test(t)) {
     return true;
   }
   const compact = compactLen(t);
   if (/女主|男主|角色|住|担任|设定/.test(t) && compact >= 6) {
+    return false;
+  }
+  if (/\d/.test(t) && /[℃°]|度|天气|降水|风|股|涨|跌|%/.test(t) && compact >= 6) {
     return false;
   }
   if (compact < 12) {
@@ -47,6 +60,19 @@ export function looksLikeReadableProse(text: string): boolean {
   return compactLen(usable.join("")) >= 12;
 }
 
+export function takeOptionalSearchAnswer(raw: string): string {
+  const match = raw.match(/（模型顺带生成的文字[^\n]*）\n([\s\S]*)$/);
+  const text = match?.[1]?.replace(/\s+/g, " ").trim() ?? "";
+  if (!text || text.length < 12 || /未检索到|无法上网|没有搜索|不能上网/.test(text)) {
+    return "";
+  }
+  return text.slice(0, 2000);
+}
+
+export function deskSearchNotes(raw: string): string {
+  return [takeOptionalSearchAnswer(raw), humanizeSearchNotes(raw)].filter(Boolean).join("\n").trim();
+}
+
 export function humanizeSearchNotes(raw: string): string {
   const text = raw.replace(/^口播超时了[^：:]*[：:]\s*/, "").trim();
   if (!text) {
@@ -62,6 +88,7 @@ export function humanizeSearchNotes(raw: string): string {
   const blocks = body.matchAll(/(\d+)\.\s*([\s\S]*?)(?=\s*\d+\.\s|$)/g);
   for (const match of blocks) {
     const rest = match[2]
+      .replace(/<[^>]+>/g, " ")
       .replace(/https?:\/\/[^\s]+/gi, " ")
       .replace(/\/hdd\/[^\s]*/gi, " ")
       .replace(/\/datasets\/[^\s]*/gi, " ")
@@ -73,6 +100,8 @@ export function humanizeSearchNotes(raw: string): string {
     if (
       !rest ||
       /^外部数据|^查询：|^来源：/.test(rest) ||
+      SLOGAN.test(rest) ||
+      SOCIAL_JUNK.test(rest) ||
       isTitleOnlyChunk(rest) ||
       CORPUS_JUNK.test(rest) ||
       ENCODED_PATH.test(rest)

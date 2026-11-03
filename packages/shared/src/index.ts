@@ -5,3 +5,4 @@ export * from "./settings";
 export * from "./plugin";
 export * from "./memory";
 export * from "./canvas";
+export * from "./knowledge";

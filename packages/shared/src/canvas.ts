@@ -80,6 +80,7 @@ export interface CanvasDocument {
   turnId: string;
   sessionId: string;
   items: CanvasItem[];
+  validationError?: string;
 }
 
 export interface CanvasSnapshot {

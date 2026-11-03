@@ -3,8 +3,7 @@ export interface ChunkSeg {
   headingPath: string[];
 }
 
-export const CHUNK_TARGET_CHARS = 700;
-export const CHUNK_MAX_CHARS = 1200;
+export const CHUNK_MAX_CHARS = 720;
 
 const HEADING_RE = /^(#{1,3})\s+(.*)$/;
 
@@ -82,46 +81,18 @@ export function chunkDocument(text: string): ChunkSeg[] {
   const sections = splitSections(text);
   const chunks: ChunkSeg[] = [];
 
-  const packUnits = (units: Array<{ text: string; atomic: boolean }>, heading: string[]): void => {
-    let buf: string[] = [];
-    let bufLen = 0;
-    const flush = (): void => {
-      const content = buf.join("\n\n").trim();
-      if (content) {
-        chunks.push({ text: content, headingPath: heading });
-      }
-      buf = [];
-      bufLen = 0;
-    };
-    for (const unit of units) {
-      if (unit.atomic) {
-        flush();
-        chunks.push({ text: unit.text, headingPath: heading });
-        continue;
-      }
-      if (bufLen > 0 && bufLen + unit.text.length > CHUNK_TARGET_CHARS) {
-        flush();
-      }
-      buf.push(unit.text);
-      bufLen += unit.text.length;
-    }
-    flush();
-  };
-
   for (const section of sections) {
-    const units: Array<{ text: string; atomic: boolean }> = [];
     for (const paragraph of splitParagraphs(section.body)) {
       if (isAtomicBlock(paragraph)) {
-        units.push({ text: paragraph, atomic: true });
+        chunks.push({ text: paragraph, headingPath: section.heading });
       } else if (paragraph.length > CHUNK_MAX_CHARS) {
         for (const sentence of splitSentences(paragraph)) {
-          units.push({ text: sentence, atomic: false });
+          chunks.push({ text: sentence, headingPath: section.heading });
         }
       } else {
-        units.push({ text: paragraph, atomic: false });
+        chunks.push({ text: paragraph, headingPath: section.heading });
       }
     }
-    packUnits(units, section.heading);
   }
   return chunks;
 }

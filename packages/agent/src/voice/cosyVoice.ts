@@ -8,6 +8,8 @@ export class CosyVoiceClient {
   private ws: WebSocket | null = null;
   private taskId = "";
   private started = false;
+  private doneOnce = false;
+  private finishing: { resolve: () => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(
     private readonly apiKey: string,
@@ -22,8 +24,29 @@ export class CosyVoiceClient {
     return TTS_SAMPLE_RATE;
   }
 
+  private emitDone(): void {
+    if (this.doneOnce) {
+      return;
+    }
+    this.doneOnce = true;
+    this.clearFinishing(true);
+    this.onDone();
+  }
+
+  private clearFinishing(resolve: boolean): void {
+    if (!this.finishing) {
+      return;
+    }
+    clearTimeout(this.finishing.timer);
+    if (resolve) {
+      this.finishing.resolve();
+    }
+    this.finishing = null;
+  }
+
   async start(): Promise<void> {
     this.close();
+    this.doneOnce = false;
     this.taskId = randomUUID();
     this.ws = openDashscopeWs(this.apiKey, this.httpBaseUrl);
     await waitOpen(this.ws);
@@ -71,11 +94,11 @@ export class CosyVoiceClient {
             return;
           }
           this.close();
-          this.onDone();
+          this.emitDone();
           return;
         }
         if (parsed?.event === "task-finished") {
-          this.onDone();
+          this.emitDone();
         }
       });
     });
@@ -120,23 +143,50 @@ export class CosyVoiceClient {
     );
   }
 
-  finish(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.taskId) {
-      return;
+  finish(): Promise<void> {
+    if (this.doneOnce) {
+      return Promise.resolve();
     }
-    this.ws.send(
-      JSON.stringify({
-        header: {
-          action: "finish-task",
-          task_id: this.taskId,
-          streaming: "duplex"
-        },
-        payload: { input: {} }
-      })
-    );
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.taskId) {
+      this.emitDone();
+      return Promise.resolve();
+    }
+    if (this.finishing) {
+      return new Promise((resolve) => {
+        const prev = this.finishing;
+        if (!prev) {
+          resolve();
+          return;
+        }
+        const inner = prev.resolve;
+        prev.resolve = () => {
+          inner();
+          resolve();
+        };
+      });
+    }
+    return new Promise((resolve) => {
+      this.finishing = {
+        resolve,
+        timer: setTimeout(() => {
+          this.emitDone();
+        }, 10000)
+      };
+      this.ws?.send(
+        JSON.stringify({
+          header: {
+            action: "finish-task",
+            task_id: this.taskId,
+            streaming: "duplex"
+          },
+          payload: { input: {} }
+        })
+      );
+    });
   }
 
   cancel(): void {
+    this.clearFinishing(true);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.taskId) {
       this.close();
       return;
@@ -159,6 +209,7 @@ export class CosyVoiceClient {
   }
 
   close(): void {
+    this.clearFinishing(true);
     this.ws?.close();
     this.ws = null;
     this.started = false;
