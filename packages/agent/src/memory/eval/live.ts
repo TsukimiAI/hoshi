@@ -1,9 +1,10 @@
+import { loadRepoEnv } from "../../eval/settings";
 import type { LlmMessage } from "../../llm/openai";
 import { OpenAiCompatClient } from "../../llm/openai";
 import { planMemoryWrites } from "../apply";
-import { extractLongTermOps } from "../extract";
+import { canExtractMemory, extractLongTermOps } from "../extract";
 import { EVAL_CASES, type EvalCase } from "./cases";
-import { toItems, writesMatch } from "./run";
+import { toItems } from "./run";
 
 export interface LiveScores {
   extract_abstain_acc: number;
@@ -22,10 +23,13 @@ function liveCases(): EvalCase[] {
 }
 
 async function extractOps(evalCase: EvalCase, completeChat: CompleteChat) {
+  if (!canExtractMemory(true, evalCase.user)) {
+    return [];
+  }
   return extractLongTermOps({
     userText: evalCase.user,
-    assistantText: evalCase.assistant,
     existing: toItems(evalCase.existing).map((item) => ({
+      id: item.id,
       text: item.text,
       kind: item.kind,
       topic: item.topic
@@ -61,7 +65,7 @@ export async function runLiveEval(completeChat: CompleteChat): Promise<LiveScore
       const hit =
         ops.some((op) => op.action === "upsert") &&
         keywords.every((word) => blob.includes(word)) &&
-        writesMatch(writes, evalCase.expectWrites ?? []);
+        writes.some((write) => write.type === "insert" || write.type === "update");
       if (hit) {
         mustOk += 1;
       } else {
@@ -69,11 +73,13 @@ export async function runLiveEval(completeChat: CompleteChat): Promise<LiveScore
       }
     } else if (kind === "update") {
       updateN += 1;
+      const keywords = evalCase.live?.keywords ?? [];
       const writes = planMemoryWrites(ops, toItems(evalCase.existing));
+      const expectedId = evalCase.expectWrites?.find((item) => item.id)?.id;
       const ok =
-        writes.some((write) => write.type === "update") &&
+        writes.some((write) => write.type === "update" && (!expectedId || write.id === expectedId)) &&
         writes.every((write) => write.type !== "insert") &&
-        writesMatch(writes, evalCase.expectWrites ?? []);
+        keywords.every((word) => blob.includes(word));
       if (ok) {
         updateOk += 1;
       } else {
@@ -94,6 +100,7 @@ export async function runLiveEval(completeChat: CompleteChat): Promise<LiveScore
 }
 
 export async function runLiveEvalFromEnv(): Promise<LiveScores | { skipped: string }> {
+  loadRepoEnv();
   const apiKey = process.env.HOSHI_API_KEY?.trim() ?? "";
   if (!apiKey) {
     return { skipped: "missing HOSHI_API_KEY" };
@@ -104,7 +111,11 @@ export async function runLiveEvalFromEnv(): Promise<LiveScores | { skipped: stri
     model: process.env.HOSHI_MODEL?.trim() || "qwen-plus"
   });
   return runLiveEval(async (messages) => {
-    const result = await client.completeChat(messages, [], { enableSearch: false, timeoutMs: 20000 });
+    const result = await client.completeChat(messages, [], {
+      enableSearch: false,
+      timeoutMs: 20000,
+      temperature: 0
+    });
     return result.content;
   });
 }

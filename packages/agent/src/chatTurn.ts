@@ -11,7 +11,7 @@ import type {
 import { addUsage } from "@hoshi/shared";
 import { canExtractMemory, extractLongTermOps } from "./memory/extract";
 import { planMemoryWrites } from "./memory/apply";
-import { selectMemoriesForInject } from "./memory/inject";
+import { selectAckedMemoryIds } from "./memory/inject";
 import { logMemoryTurn, summarizeWrites } from "./memory/log";
 import type { OpenAiCompatClient } from "./llm/openai";
 import { sanitizeChatImages } from "./llm/openai";
@@ -71,13 +71,128 @@ export async function* runSessionChat(input: {
   let assistantFull = "";
   let lastEmotion: Emotion | null = null;
   let chatUsage: LlmUsage | undefined;
-  const unacked = await memoryRepo.listUnacked(2);
-  const memories = await memoryRepo.listActive();
-  const injectTexts = selectMemoriesForInject(memories, message).map((item) => item.text);
   const activitySteps: CanvasTurnActivityStep[] = [];
+  const extractPending = canExtractMemory(chatSettings.memoryAutoWrite, message);
+
+  const finishIfAborted = async (): Promise<boolean> => {
+    if (!signal?.aborted) {
+      return false;
+    }
+    if (input.workspace === "desk") {
+      await repo.appendMessage({
+        sessionId,
+        role: "assistant",
+        content: assistantFull.trim() ? assistantFull : "已停止",
+        emotion: lastEmotion
+      });
+    } else if (userMessageId && !assistantFull.trim()) {
+      await repo.deleteMessage(userMessageId);
+    } else if (assistantFull.trim()) {
+      await repo.appendMessage({
+        sessionId,
+        role: "assistant",
+        content: assistantFull,
+        emotion: lastEmotion
+      });
+    }
+    return true;
+  };
+
+  if (await finishIfAborted()) {
+    return;
+  }
+
+  if (extractPending) {
+    const extractStarted = Date.now();
+    yield { event: "progress", data: { phase: "tool_start", name: "记忆" } };
+    activitySteps.push({ kind: "tool", name: "记忆" });
+    let extractOk = true;
+    const runExtract = async (): Promise<void> => {
+      try {
+        const ops = await extractLongTermOps({
+          userText: message,
+          existing: (await memoryRepo.neighborsForExtract(message)).map((item) => ({
+            id: item.id,
+            text: item.text,
+            kind: item.kind,
+            topic: item.topic
+          })),
+          completeChat: async (messages) => {
+            const result = await llm.completeChat(messages, [], {
+              enableSearch: false,
+              timeoutMs: 20000,
+              purpose: "extract",
+              sessionId,
+              temperature: 0
+            });
+            return result.content;
+          }
+        });
+        const latest = await memoryRepo.listActive();
+        const similar = await memoryRepo.similarForTexts(ops.map((op) => op.text));
+        const writes = planMemoryWrites(ops, latest, similar);
+        for (const write of writes) {
+          if (write.type === "insert") {
+            await memoryRepo.insert(write.text, sessionId, write.kind, write.topic);
+          } else if (write.type === "update") {
+            await memoryRepo.updateText(write.id, write.text, {
+              topic: write.topic,
+              acked: false
+            });
+          } else {
+            await memoryRepo.supersede(write.id);
+          }
+        }
+        logMemoryTurn({
+          phase: "extract",
+          sessionId,
+          turnId,
+          write: summarizeWrites(writes),
+          n: writes.length,
+          ms: Date.now() - extractStarted
+        });
+      } catch {
+        extractOk = false;
+        logMemoryTurn({
+          phase: "extract",
+          sessionId,
+          turnId,
+          write: "error",
+          n: 0,
+          ms: Date.now() - extractStarted
+        });
+      }
+    };
+    const queued = extractQueue.then(runExtract);
+    extractQueue = queued.then(
+      () => undefined,
+      () => undefined
+    );
+    await queued;
+    const elapsedMs = Date.now() - extractStarted;
+    const pending = [...activitySteps]
+      .reverse()
+      .find((step) => step.kind === "tool" && step.name === "记忆" && step.elapsedMs == null);
+    if (pending) {
+      pending.elapsedMs = elapsedMs;
+      if (!extractOk) pending.ok = false;
+    }
+    yield {
+      event: "progress",
+      data: { phase: "tool_done", name: "记忆", elapsedMs, ok: extractOk }
+    };
+  }
+
+  if (await finishIfAborted()) {
+    return;
+  }
+
+  const unacked = await memoryRepo.listUnacked(2);
+  const injectItems = await memoryRepo.retrieveForInject(message);
+  const injectTexts = injectItems.map((item) => item.text);
   try {
     for await (const event of runtime.chat(runtimeBody, {
-      longTermMemories: injectTexts,
+      longTermMemories: injectItems,
       memoryAckTexts: unacked.map((item) => item.text),
       canvasPrompt: input.canvasPrompt,
       signal,
@@ -145,38 +260,20 @@ export async function* runSessionChat(input: {
       throw error;
     }
   }
-  if (signal?.aborted) {
-    if (input.workspace === "desk") {
-      await repo.appendMessage({
-        sessionId,
-        role: "assistant",
-        content: assistantFull.trim() ? assistantFull : "已停止",
-        emotion: lastEmotion
-      });
-    } else if (userMessageId && !assistantFull.trim()) {
-      await repo.deleteMessage(userMessageId);
-    } else if (assistantFull.trim()) {
-      await repo.appendMessage({
-        sessionId,
-        role: "assistant",
-        content: assistantFull,
-        emotion: lastEmotion
-      });
-    }
+  if (await finishIfAborted()) {
     return;
   }
-  if (assistantFull.trim() && unacked.length > 0) {
-    await memoryRepo.markAcked(unacked.map((item) => item.id));
+  const ackedIds =
+    assistantFull.trim() && unacked.length > 0 ? selectAckedMemoryIds(assistantFull, unacked) : [];
+  if (ackedIds.length > 0) {
+    await memoryRepo.markAcked(ackedIds);
   }
-  const extractPending =
-    Boolean(assistantFull.trim()) &&
-    canExtractMemory(chatSettings.memoryAutoWrite, message, assistantFull);
   logMemoryTurn({
     phase: "chat",
     sessionId,
     turnId,
     inject: injectTexts.length,
-    ack: unacked.length,
+    ack: ackedIds.length,
     extract: extractPending ? "pending" : "skip",
     ms: Date.now() - chatStarted
   });
@@ -189,62 +286,4 @@ export async function* runSessionChat(input: {
     content: assistantFull,
     emotion: lastEmotion
   });
-  if (!extractPending) {
-    return;
-  }
-  const extractStarted = Date.now();
-  const runExtract = async (): Promise<void> => {
-    try {
-      const ops = await extractLongTermOps({
-        userText: message,
-        assistantText: assistantFull,
-        existing: (await memoryRepo.listActive()).map((item) => ({
-          text: item.text,
-          kind: item.kind,
-          topic: item.topic
-        })),
-        completeChat: async (messages) => {
-          const result = await llm.completeChat(messages, [], {
-            enableSearch: false,
-            timeoutMs: 20000,
-            purpose: "extract",
-            sessionId
-          });
-          return result.content;
-        }
-      });
-      const latest = await memoryRepo.listActive();
-      const writes = planMemoryWrites(ops, latest);
-      for (const write of writes) {
-        if (write.type === "insert") {
-          await memoryRepo.insert(write.text, sessionId, write.kind, write.topic);
-        } else if (write.type === "update") {
-          await memoryRepo.updateText(write.id, write.text, {
-            topic: write.topic,
-            acked: false
-          });
-        } else {
-          await memoryRepo.supersede(write.id);
-        }
-      }
-      logMemoryTurn({
-        phase: "extract",
-        sessionId,
-        turnId,
-        write: summarizeWrites(writes),
-        n: writes.length,
-        ms: Date.now() - extractStarted
-      });
-    } catch {
-      logMemoryTurn({
-        phase: "extract",
-        sessionId,
-        turnId,
-        write: "error",
-        n: 0,
-        ms: Date.now() - extractStarted
-      });
-    }
-  };
-  extractQueue = extractQueue.then(runExtract);
 }

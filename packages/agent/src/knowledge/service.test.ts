@@ -104,6 +104,10 @@ describe("KnowledgeService", () => {
     expect(summarized.every((hit, index) => index === 0 || hit.seq >= summarized[index - 1].seq)).toBe(true);
     expect(summarized.some((hit) => hit.text.includes("BSS"))).toBe(true);
 
+    const inKb = await service.search("总结下我知识库里MIT6的内容", { mode: "summarize" });
+    expect(inKb.length).toBeGreaterThan(1);
+    expect(inKb.some((hit) => hit.text.includes("BSS"))).toBe(true);
+
     const lookup = await service.search("MIT6里BSS段是什么", { mode: "lookup" });
     expect(lookup.length).toBeGreaterThan(0);
     expect(lookup[0].text).toContain("BSS");
@@ -125,6 +129,23 @@ describe("KnowledgeService", () => {
     const hits = await service.search("量子叠加");
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].text).toContain("量子叠加");
+    db.close();
+  });
+
+  it("中文页表问句能靠对照词命中英文 page table 段", async () => {
+    const { db, service } = makeService();
+    const collection = await service.createCollection("库");
+    await service.ingestDocument({
+      collectionId: collection.id,
+      title: "xv6",
+      sourceName: "",
+      mime: "text/plain",
+      text: "A page table maps virtual addresses to physical frames."
+    });
+    await service.flushQueue();
+    const hits = await service.search("操作系统里的页表概念");
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].text).toContain("page table");
     db.close();
   });
 
@@ -437,6 +458,104 @@ describe("KnowledgeService", () => {
     // 旧文档 A 仍能被语义检索命中（已被自动重嵌到新维度）
     const hits = await service.search("猫");
     expect(hits.some((hit) => hit.text.includes("猫"))).toBe(true);
+    db.close();
+  });
+
+  it("检索丢掉跑题段，相关段留下", async () => {
+    const flatEmbedding: EmbeddingProvider = {
+      modelKey: () => "fake:flat",
+      async embed(texts: string[]): Promise<number[][]> {
+        return texts.map(() => [1, 0, 0, 0]);
+      }
+    };
+    const db = new DatabaseSync(":memory:", { allowExtension: true });
+    migrateDb(db);
+    const service = new KnowledgeService(db, flatEmbedding, DEFAULT_HOSHI_SETTINGS.knowledge as KnowledgeSettings);
+    const collection = await service.createCollection("库");
+    await service.ingestDocument({
+      collectionId: collection.id,
+      title: "讲义",
+      sourceName: "lec.md",
+      mime: "text/plain",
+      text: "如果你看一下二进制的布局，这有一些文本T，数据段D，通常还有所谓的BSS段。"
+    });
+    await service.ingestDocument({
+      collectionId: collection.id,
+      title: "行情",
+      sourceName: "stock.md",
+      mime: "text/plain",
+      text: "今日股票开盘上涨，沪深两市成交活跃。"
+    });
+    await service.flushQueue();
+
+    const hits = await service.search("今日股票");
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((hit) => hit.text.includes("股票"))).toBe(true);
+    expect(hits.some((hit) => hit.text.includes("BSS"))).toBe(false);
+    db.close();
+  });
+
+  it("主题过滤全丢时留分最高 1 条", async () => {
+    const flatEmbedding: EmbeddingProvider = {
+      modelKey: () => "fake:flat",
+      async embed(texts: string[]): Promise<number[][]> {
+        return texts.map(() => [1, 0, 0, 0]);
+      }
+    };
+    const db = new DatabaseSync(":memory:", { allowExtension: true });
+    migrateDb(db);
+    const service = new KnowledgeService(db, flatEmbedding, DEFAULT_HOSHI_SETTINGS.knowledge as KnowledgeSettings);
+    const collection = await service.createCollection("库");
+    await service.ingestDocument({
+      collectionId: collection.id,
+      title: "讲义",
+      sourceName: "",
+      mime: "text/plain",
+      text: "如果你看一下二进制的布局，这有一些文本T，数据段D，通常还有所谓的BSS段。"
+    });
+    await service.flushQueue();
+
+    const hits = await service.search("今日股票");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].text).toContain("BSS");
+    db.close();
+  });
+
+  it("重建：有正文则按一段一块重切，无正文只重嵌", async () => {
+    const { db, service } = makeService();
+    const collection = await service.createCollection("库");
+    const paras = Array.from({ length: 8 }, (_, i) => `第${i}段关于猫的短文。`);
+    const { doc } = await service.ingestDocument({
+      collectionId: collection.id,
+      title: "有正文",
+      sourceName: "cats.md",
+      mime: "text/plain",
+      text: paras.join("\n\n")
+    });
+    const empty = await service.ingestDocument({
+      collectionId: collection.id,
+      title: "无正文",
+      sourceName: "old.md",
+      mime: "text/plain",
+      text: "狗喜欢跑步。"
+    });
+    await service.flushQueue();
+
+    db.prepare(`UPDATE kb_documents SET source_text = '' WHERE id = ?`).run(empty.doc.id);
+    const beforeEmpty = await service.listChunks(empty.doc.id);
+    expect(beforeEmpty.total).toBe(1);
+
+    const result = await service.reindexAll();
+    const after = await service.listChunks(doc.id);
+    expect(after.total).toBe(paras.length);
+    expect(after.chunks.map((chunk) => chunk.text)).toEqual(paras);
+    const afterEmpty = await service.listChunks(empty.doc.id);
+    expect(afterEmpty.total).toBe(1);
+    expect(afterEmpty.chunks[0].text).toBe("狗喜欢跑步。");
+    expect(result.chunks).toBe(paras.length + 1);
+
+    const hits = await service.search("狗");
+    expect(hits.some((hit) => hit.text.includes("狗"))).toBe(true);
     db.close();
   });
 });

@@ -301,7 +301,7 @@ export class CanvasRepo {
 
   restoreFromSnapshot(sessionId: string, turnId: string): CanvasItem[] | null {
     const snap = this.getSnapshot(turnId);
-    if (!snap || snap.sessionId !== sessionId) {
+    if (!snap || snap.sessionId !== sessionId || snap.document.validationError) {
       return null;
     }
     return this.replaceSession(

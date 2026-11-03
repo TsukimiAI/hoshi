@@ -12,16 +12,16 @@ import { resolveSentenceEmotion } from "./emotion";
 import type { PersonaConfig } from "./persona";
 import { parseToolArgs } from "./plugins/parseTool";
 import type { LlmTool } from "./plugins/types";
-import { buildMemoryAckPrompt, buildMemoryInjectPrompt } from "./memory/inject";
+import { buildMemoryAckPrompt, buildMemoryInjectPrompt, type MemoryInjectLine } from "./memory/inject";
 import { buildSearchSitesPrompt, parseSiteLines, EMOTION_USAGE_PROMPT, SEARCH_USAGE_PROMPT } from "./searchPrompt";
-import { buildIntegratePrompt, extractDeskTopic, extractPortraitNames, knowledgeHitLooksEmpty, knowledgeRoute, knowledgeSearchQuery, looksLikeChitchat, looksLikeCompareQuery, looksLikePersonQuery, looksLikeWorkQuery, shouldWebSearch } from "./retrieval/plan";
-import { formatSearchActivity, humanizeSearchNotes, looksLikeReadableProse, looksLikeSearchToolDump } from "./web/notes";
+import { buildDeskCanvasPrompt, buildIntegratePrompt, classifyDeskTurn, hasLiveFactNumbers, knowledgeHitLooksEmpty, knowledgeRoute, looksLikeUsableWebBrief, shouldWebSearch, WEB_BRIEF_PROMPT } from "./retrieval/plan";
+import { deskSearchNotes, formatSearchActivity, humanizeSearchNotes, looksLikeReadableProse } from "./web/notes";
 import {
   buildDeskSearchQueries,
   excerptMatchesQuestion,
   mergeDeskBrief,
-  stripFetchPrefix,
-  wikiUrlsFromSearchRaw
+  pageUrlsFromSearchRaw,
+  stripFetchPrefix
 } from "./web/deskRetrieve";
 import { hasSpeechContent, SentenceSplitter } from "./sentence";
 
@@ -80,7 +80,7 @@ export class AgentRuntime {
   async *chat(
     body: ChatRequestBody,
     extra?: {
-      longTermMemories?: string[];
+      longTermMemories?: MemoryInjectLine[];
       memoryAckTexts?: string[];
       canvasPrompt?: string;
       signal?: AbortSignal;
@@ -106,6 +106,7 @@ export class AgentRuntime {
     const webTools = tools.some((tool) => tool.function.name === "web_search");
     const canFetch = tools.some((tool) => tool.function.name === "web_fetch");
     const desk = body.workspace === "desk";
+    const deskTurn = classifyDeskTurn(message);
     const kbRoute = knowledgeRoute(message);
     const web = shouldWebSearch(message);
     const canvasTools = tools.filter((tool) => tool.function.name.startsWith("canvas_"));
@@ -145,7 +146,7 @@ export class AgentRuntime {
     if (kbEnabled && kbRoute.kind !== "skip" && this.config.plugins) {
       const raw = await this.config.plugins
         .execute("search_knowledge", {
-          query: knowledgeSearchQuery(message),
+          query: kbRoute.query,
           mode: kbRoute.kind
         })
         .catch((error) => (error instanceof Error ? error.message : "检索失败"));
@@ -165,9 +166,12 @@ export class AgentRuntime {
     };
 
     let webBody: string | null = null;
+    let webSearched = false;
+    let turnUsage: LlmUsage | undefined;
     if (desk && web && webTools && this.config.plugins) {
       const queries = buildDeskSearchQueries(message, deskPriorText(body.history, extra?.canvasPrompt));
       if (queries.length > 0) {
+        webSearched = true;
         yield {
           event: "progress",
           data: { phase: "tool_start", name: "web_search", detail: queries.join("；") }
@@ -179,8 +183,8 @@ export class AgentRuntime {
           "tool web_search timeout"
         ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
         const searchOk = toolResultOk("web_search", searchRaw);
-        const notes = searchOk ? humanizeSearchNotes(searchRaw) : "";
-        if (notes) {
+        const notes = searchOk ? deskSearchNotes(searchRaw) : "";
+        if (notes && deskTurn.kind !== "live") {
           webBody = notes;
         }
         yield {
@@ -193,14 +197,20 @@ export class AgentRuntime {
             elapsedMs: Date.now() - searchStarted
           }
         };
+        let fetchBundle = "";
         if (searchOk && canFetch) {
-          for (const url of wikiUrlsFromSearchRaw(searchRaw, message)) {
+          const urls = pageUrlsFromSearchRaw(searchRaw, message, deskTurn.kind);
+          for (const url of urls) {
             if (extra?.signal?.aborted) {
               return;
             }
             yield {
               event: "progress",
-              data: { phase: "tool_start", name: "web_fetch", detail: "维基摘录" }
+              data: {
+                phase: "tool_start",
+                name: "web_fetch",
+                detail: deskTurn.kind === "live" ? "预报摘录" : "网页摘录"
+              }
             };
             const fetchStarted = Date.now();
             const fetchRaw = await withTimeout(
@@ -212,7 +222,11 @@ export class AgentRuntime {
             const fetched = stripFetchPrefix(fetchRaw);
             const aligned = fetchOk && excerptMatchesQuestion(fetched, message);
             if (aligned && looksLikeReadableProse(fetched)) {
-              webBody = mergeDeskBrief([webBody ?? "", fetched]) || webBody;
+              if (deskTurn.kind === "live") {
+                fetchBundle = mergeDeskBrief([fetchBundle, fetched]);
+              } else {
+                webBody = mergeDeskBrief([webBody ?? "", fetched]) || webBody;
+              }
             }
             const fetchDetail = aligned
               ? fetched
@@ -239,6 +253,31 @@ export class AgentRuntime {
             };
           }
         }
+        if (deskTurn.kind === "live" && searchOk) {
+          const material = [searchRaw, fetchBundle].filter(Boolean).join("\n").slice(0, 8000);
+          try {
+            const brief = await this.config.llm.completeChat(
+              [
+                { role: "system", content: WEB_BRIEF_PROMPT },
+                { role: "user", content: material || message }
+              ],
+              [],
+              { timeoutMs: 15000, enableSearch: false, purpose: "chat", sessionId: extra?.sessionId ?? body.sessionId }
+            );
+            if (brief.usage) {
+              this.config.llm.noteUsage?.("chat", brief.usage, extra?.sessionId ?? body.sessionId);
+              turnUsage = addUsage(turnUsage, brief.usage);
+            }
+            const text = (brief.content ?? "").trim();
+            if (hasLiveFactNumbers(text) && looksLikeUsableWebBrief(text)) {
+              webBody = text.slice(0, 8000);
+            }
+          } catch {
+            if (hasLiveFactNumbers(notes)) {
+              webBody = notes;
+            }
+          }
+        }
       }
     }
 
@@ -250,6 +289,7 @@ export class AgentRuntime {
         webBody: desk ? webBody : null,
         webLive: web && !desk,
         webTools: false,
+        webSearched: desk && webSearched,
         kbEnabled,
         kbBody,
         kbSummarize: kbRoute.kind === "summarize"
@@ -281,18 +321,15 @@ export class AgentRuntime {
       promptMessages.push({ role: "system", content: extra.canvasPrompt });
     }
     if (desk) {
+      let canvasGuide = buildDeskCanvasPrompt(deskTurn.kind);
+      if (kbEnabled && kbRoute.kind !== "skip" && !kbBody) {
+        canvasGuide +=
+          "知识库没有命中文档时：canvas_set 只写一张短 note，说明没找到匹配笔记；禁止用固有知识编造课程大纲、讲义摘要或「下一步给老师」。";
+      }
       promptMessages.push({
         role: "system",
-        content:
-          "每一句都必须调用 canvas_set（改已有卡可用 canvas_put），禁止只口头、禁止说没有画布工具。闲聊或短句：一张 kind=note 或 card，title 用不超过 8 个字的短词，不要整句问话。知识整理：能点名的每人/每概念一张 card，剧情或清单用 markdown。对照：两人各一张 card，可选 table/markdown。天气数字：kind=chart。检索摘录仅作参考；摘录脏或空时用固有知识写卡，口头可说可能过时。禁止把 web_search、queries、工具名、pdf 路径、口播借口写进 body。口播只概括卡片，不要复述 brief 或念 queries。"
+        content: canvasGuide
       });
-      if (looksLikeCompareQuery(message) && extractPortraitNames(message).length >= 2) {
-        promptMessages.push({
-          role: "system",
-          content:
-            "本题是人物对照：两位角色各一张 kind=card（title 用角色名，body 只写该人设定，禁止两张卡同一段话）。"
-        });
-      }
     }
     promptMessages.push(...(body.history ?? []));
     const messages: LlmMessage[] = toLlmMessages(promptMessages);
@@ -303,18 +340,19 @@ export class AgentRuntime {
 
     const sessionId = extra?.sessionId ?? body.sessionId;
     let speakMessages = messages;
-    let turnUsage: LlmUsage | undefined;
     let canvasPlaced = false;
     if (modelTools.length > 0) {
       try {
         let pending: LlmMessage[] = messages;
         let canvasFailed = false;
+        let canvasFailDetail = "";
         const maxRounds = desk ? 2 : 2;
         for (let round = 0; round < maxRounds; round += 1) {
           if (!desk && round > 0 && !canvasFailed) {
             break;
           }
           canvasFailed = false;
+          canvasFailDetail = "";
           const planTimeoutMs = desk ? 0 : 18000;
           const complete = await withTimeout(
             this.config.llm.completeChat(pending, modelTools, {
@@ -348,17 +386,6 @@ export class AgentRuntime {
               yield* this.emitText(complete.content);
               yield doneEvent(turnUsage);
               return;
-            }
-            if (desk && round === 0) {
-              pending = [
-                ...pending,
-                { role: "assistant", content: complete.content || "" },
-                {
-                  role: "user",
-                  content: "必须调用 canvas_set 提交卡片或便签。禁止只口头说已放卡，禁止把查询词或工具名写进 body。"
-                }
-              ];
-              continue;
             }
             break;
           }
@@ -399,6 +426,7 @@ export class AgentRuntime {
                 canvasPlaced = true;
               } else {
                 canvasFailed = true;
+                canvasFailDetail = result;
               }
             }
             if (!desk && call.name === "web_search" && ok) {
@@ -431,15 +459,37 @@ export class AgentRuntime {
           }
           pending = speakMessages;
           if (desk) {
+            if (canvasFailed && round + 1 < maxRounds) {
+              pending = [
+                ...speakMessages,
+                {
+                  role: "user",
+                  content: `画布结构不合格：${canvasFailDetail}。只改这些字段后再 canvas_set。禁止欢迎语和占位卡。`
+                }
+              ];
+              continue;
+            }
             break;
           }
         }
-      } catch {
-        /* 规划失败则带着已收集的知识库/联网设定直接回答 */
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "规划失败";
+        console.error(
+          JSON.stringify({
+            src: "hoshi.runtime",
+            phase: "plan",
+            ok: false,
+            message
+          })
+        );
+        yield {
+          event: "progress",
+          data: { phase: "tool_done", name: "plan", detail: message, ok: false }
+        };
       }
     }
     if (desk && canvasPlaced) {
-      const deskSpeak: LlmMessage[] = [
+      speakMessages = [
         { role: "system", content: this.config.persona.systemPrompt },
         {
           role: "system",
@@ -448,7 +498,17 @@ export class AgentRuntime {
         },
         { role: "user", content: userContentWithImages(message, images) }
       ];
-      speakMessages = deskSpeak;
+    } else if (desk && deskTurn.kind === "live") {
+      speakMessages = [
+        { role: "system", content: this.config.persona.systemPrompt },
+        {
+          role: "system",
+          content: hasLiveFactNumbers(webBody ?? "")
+            ? `检索摘录：\n${webBody}\n用一两句中文汇报其中的气温。禁止提 kind=chart、画布拒绝、工具名；禁止让老师手抄。`
+            : "检索没有可用的逐日气温数字，没有往画布落卡。用一两句中文说明这次没画成图。禁止提 kind=chart、画布拒绝、工具名；禁止让老师手抄气温或日期表。"
+        },
+        { role: "user", content: userContentWithImages(message, images) }
+      ];
     }
     yield {
       event: "progress",
@@ -456,9 +516,8 @@ export class AgentRuntime {
     };
 
     const streamSearch = web && !desk;
-    const speakTimeoutMs = desk ? 20000 : 90000;
+    const speakTimeoutMs = desk ? 45000 : 90000;
     let spoke = 0;
-    let spoken = "";
     try {
       for await (const event of this.streamSentences(
         speakMessages,
@@ -472,7 +531,6 @@ export class AgentRuntime {
       )) {
         if (event.event === "sentence") {
           spoke += 1;
-          spoken += String((event.data as { text?: string }).text ?? "");
         }
         yield event;
       }
@@ -504,9 +562,6 @@ export class AgentRuntime {
           if (text) {
             for await (const event of this.emitText(text)) {
               spoke += 1;
-              if (event.event === "sentence") {
-                spoken += String((event.data as { text?: string }).text ?? "");
-              }
               yield event;
             }
           }
@@ -521,31 +576,12 @@ export class AgentRuntime {
             : desk && canvasPlaced
               ? "画布已经更新好了，可以直接看卡片。"
               : web && !webBody
-                ? "这次网页检索没有拿到可用资料，没法按实测画图。你可以稍后再问，或换个更具体的地点和时间。"
+                ? deskTurn.kind === "live"
+                  ? "这次检索没有拿到可用的逐日气温，没法按实测画图。"
+                  : "这次网页检索没有拿到可用资料，没法按实测画图。你可以稍后再问，或换个更具体的地点和时间。"
                 : "我这边没有生成成句回复，请再试一次。";
         for await (const event of this.emitText(fallback)) {
           spoke += 1;
-          if (event.event === "sentence") {
-            spoken += String((event.data as { text?: string }).text ?? "");
-          }
-          yield event;
-        }
-      }
-      if (body.workspace === "desk" && !canvasPlaced) {
-        for await (const event of this.ensureDeskKnowledgeCard({
-          message,
-          webBody,
-          kbBody,
-          signal: extra?.signal
-        })) {
-          if (
-            event.event === "progress" &&
-            event.data.phase === "tool_done" &&
-            event.data.ok &&
-            String(event.data.name ?? "").startsWith("canvas_")
-          ) {
-            canvasPlaced = true;
-          }
           yield event;
         }
       }
@@ -559,19 +595,6 @@ export class AgentRuntime {
           const text = timeoutSpeakFallback(webBody);
           for await (const event of this.emitText(text)) {
             spoke += 1;
-            if (event.event === "sentence") {
-              spoken += String((event.data as { text?: string }).text ?? "");
-            }
-            yield event;
-          }
-        }
-        if (body.workspace === "desk" && !canvasPlaced) {
-          for await (const event of this.ensureDeskKnowledgeCard({
-            message,
-            webBody,
-            kbBody,
-            signal: extra?.signal
-          })) {
             yield event;
           }
         }
@@ -619,7 +642,7 @@ export class AgentRuntime {
       }
     } catch (error) {
       if (isAbortTimeout(error) || (error instanceof Error && /超时/.test(error.message))) {
-        /* 口播超时交给外层用摘录补答/补卡 */
+        /* 口播超时交给外层用摘录补答 */
       } else {
         throw error;
       }
@@ -631,96 +654,6 @@ export class AgentRuntime {
         yield event;
       }
     }
-  }
-
-  private async *ensureDeskKnowledgeCard(input: {
-    message: string;
-    webBody: string | null;
-    kbBody: string | null;
-    signal?: AbortSignal;
-  }): AsyncGenerator<AgentEvent> {
-    if (!this.config.plugins || input.signal?.aborted) {
-      return;
-    }
-    const names = extractPortraitNames(input.message);
-    const notes = usableCardBody(humanizeSearchNotes(input.webBody ?? ""));
-    const kb = usableCardBody((input.kbBody ?? "").replace(/\s+/g, " ").trim());
-    const prose = [notes, kb].find((item) => looksLikeReadableProse(item)) ?? "";
-    const person = looksLikePersonQuery(input.message);
-    const work = !person && looksLikeWorkQuery(input.message);
-    const kicker = person ? "人物 / 角色" : work ? "作品" : looksLikeChitchat(input.message) ? "备注" : "知识点";
-    const tags = person ? ["角色"] : work ? ["作品"] : looksLikeChitchat(input.message) ? ["备注"] : ["概念"];
-    const items: Array<Record<string, unknown>> = [];
-    const source = [notes, kb].filter((item) => looksLikeReadableProse(item)).join("\n");
-    for (const title of names) {
-      const about = source
-        .split(/[。！？\n]/)
-        .map((line) => line.trim())
-        .find((line) => line.includes(title) && looksLikeReadableProse(line));
-      let body = about ? `${about}。` : "";
-      if (!body && names.length === 1 && looksLikeReadableProse(prose)) {
-        body = prose.slice(0, 2000);
-      }
-      if (!looksLikeReadableProse(body) && looksLikeReadableProse(prose)) {
-        const snippet = prose
-          .split(/[。！？\n]/)
-          .map((line) => line.trim())
-          .filter((line) => line.includes(title) && line.length >= 8)
-          .slice(0, 4)
-          .join("。");
-        body = snippet ? `${snippet}。` : "";
-      }
-      if (!looksLikeReadableProse(body)) {
-        continue;
-      }
-      items.push({
-        kind: "card",
-        title,
-        kicker,
-        body: body.slice(0, 2000),
-        tags
-      });
-    }
-    if (items.length === 0) {
-      const title = fallbackDeskTitle(input.message, names);
-      if (looksLikeReadableProse(prose)) {
-        items.push({
-          kind: "card",
-          title,
-          kicker,
-          body: prose.slice(0, 2000),
-          tags
-        });
-      } else {
-        items.push({
-          kind: "note",
-          title,
-          body: inherentDeskNote(input.message, title)
-        });
-      }
-    }
-    yield {
-      event: "progress",
-      data: { phase: "tool_start", name: "canvas_set", detail: String(items[0]?.title ?? "要点") }
-    };
-    const started = Date.now();
-    const result = await withTimeout(
-      this.config.plugins.execute("canvas_set", {
-        items
-      }),
-      this.pluginTimeoutMs(),
-      "tool canvas_set timeout"
-    ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
-    yield {
-      event: "progress",
-      data: {
-        phase: "tool_done",
-        name: "canvas_set",
-        detail: result.slice(0, 8000),
-        ok: toolResultOk("canvas_set", result),
-        elapsedMs: Date.now() - started
-      }
-    };
   }
 
   private async *emitText(text: string): AsyncGenerator<AgentEvent> {
@@ -744,7 +677,7 @@ export class AgentRuntime {
 
   private toSentence(sentence: string, index: number): SentenceEvent | null {
     const parsed = resolveSentenceEmotion(sentence, this.config.persona.defaultEmotion);
-    if (!parsed.text || !hasSpeechContent(parsed.text)) {
+    if (!parsed.text || !hasSpeechContent(parsed.text) || looksLikeInternalCanvasTalk(parsed.text)) {
       return null;
     }
     return {
@@ -829,45 +762,16 @@ function toolResultOk(name: string, result: string): boolean {
   return !/失败|不可用|缺少|拒绝：/.test(result);
 }
 
+function looksLikeInternalCanvasTalk(text: string): boolean {
+  return /kind=chart|画布拒绝|时效这一页|只认 chart|老师要是拿到逐日|逐日实测记录/.test(text);
+}
+
 function timeoutSpeakFallback(webBody: string | null): string {
   const brief = humanizeSearchNotes(webBody ?? "");
   if (brief.length >= 24) {
     return `口播超时了，先按检索到的资料说：${brief.slice(0, 280)}`;
   }
   return "回答超时，请再试一次。";
-}
-
-function usableCardBody(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed || looksLikeSearchToolDump(trimmed) || /还在整理/.test(trimmed)) {
-    return "";
-  }
-  return trimmed.slice(0, 2000);
-}
-
-function fallbackDeskTitle(message: string, names: string[]): string {
-  if (names.length >= 2) {
-    return "要点";
-  }
-  const topic = extractDeskTopic(message);
-  if (topic) {
-    return topic.slice(0, 16);
-  }
-  if (names.length === 1) {
-    return names[0];
-  }
-  return "要点";
-}
-
-function inherentDeskNote(message: string, title: string): string {
-  if (looksLikeChitchat(message)) {
-    return "老师打了招呼。这一页先记下，想整理知识时再往下写。";
-  }
-  if (title && title !== "要点") {
-    return `${title}是这轮要整理的对象。公开摘录不够用，先占一格，细节可以下一问再补。`;
-  }
-  const clipped = message.replace(/\s+/g, " ").trim().slice(0, 24);
-  return `先把「${clipped}」这一问记下。资料不够展开时，下一问再补细节。`;
 }
 
 function deskPriorText(history?: ChatMessage[], canvasPrompt?: string): string {

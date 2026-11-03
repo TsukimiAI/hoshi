@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { migrateDb } from "../storage/db";
 import { CanvasRepo } from "../storage/canvasRepo";
-import { CanvasToolHost, runWithCanvasTurn } from "./tool";
+import { CanvasToolHost, canvasMissesQuestion, runWithCanvasTurn } from "./tool";
 import { SessionRepo } from "../storage/sessionRepo";
 
 async function makeHost(): Promise<{ host: CanvasToolHost; sessionId: string; repo: CanvasRepo }> {
@@ -93,10 +93,47 @@ describe("CanvasToolHost", () => {
     const { host } = await makeHost();
     const result = await host.execute("canvas_put", {
       kind: "card",
-      title: "最近一周天气 · 还缺两样东西",
-      body: "请把每天气温发给我"
+      title: "待补数据",
+      body: "请老师补每天气温"
     });
     expect(result).toContain("拒绝");
+    expect(result).toContain("待补数据");
+    expect(host.takeChanges()).toHaveLength(0);
+    const denied = await host.execute("canvas_put", {
+      kind: "note",
+      title: "星奈就绪",
+      body: "星奈就绪，等你出题。"
+    });
+    expect(denied).toContain("拒绝");
+    expect(host.takeChanges()).toHaveLength(0);
+  });
+
+  it("时效题拒绝人物卡", async () => {
+    const { host } = await makeHost();
+    host.setTurnHint("我想了解一个月内上海的温度情况");
+    const denied = await host.execute("canvas_set", {
+      items: [
+        {
+          kind: "card",
+          title: "温度情况",
+          kicker: "人物 / 角色",
+          body: "追求最新鲜实用的新闻",
+          tags: ["角色"]
+        }
+      ]
+    });
+    expect(denied).toContain("时效");
+    expect(host.takeChanges()).toHaveLength(0);
+    const noteDenied = await host.execute("canvas_set", {
+      items: [
+        {
+          kind: "note",
+          title: "上海近一个月天气：目前能确认的范围",
+          body: "老师给我一个具体日期区间，我再按这个口径重新检索一次。"
+        }
+      ]
+    });
+    expect(noteDenied).toMatch(/拒绝|chart|模板/);
     expect(host.takeChanges()).toHaveLength(0);
   });
 
@@ -134,7 +171,7 @@ describe("CanvasToolHost", () => {
 
   it("换页话术禁止 insert 型 put", async () => {
     const { host } = await makeHost();
-    host.setTurnHint("换成这一页天气图");
+    host.setTurnHint("换成这一页");
     const denied = await host.execute("canvas_put", { kind: "note", title: "新", body: "x" });
     expect(denied).toContain("canvas_set");
   });
@@ -589,5 +626,118 @@ describe("CanvasToolHost", () => {
     expect(names).toEqual(["鸣潮 心"]);
     expect((repo.list(session.id)[0]?.payload as { portraitPending?: boolean }).portraitPending).toBeUndefined();
     expect((repo.list(session.id)[0]?.payload as { portraitUrl?: string }).portraitUrl).toBeUndefined();
+  });
+
+  it("欢迎语不算回答了问题", () => {
+    const hint = "市面上已有的，落地的创意工坊中，ui/皮肤由用户更改是怎么设计的";
+    const pitch =
+      "星奈就绪\n白板还没内容，等你给题目。\n我能直接上板的四类东西：概念/定义 → 知识卡，人物对照用 markdown，数字用柱状图。";
+    expect(canvasMissesQuestion(hint, [pitch])).toBe(true);
+    expect(canvasMissesQuestion(hint, ["创意工坊\n皮肤由用户改的工坊，一般做成可替换的主题槽。"])).toBe(false);
+    expect(canvasMissesQuestion("你好", [pitch])).toBe(false);
+  });
+
+  it("问具体题目时拒绝把欢迎卡写上活板", async () => {
+    const { host, sessionId, repo } = await makeHost();
+    host.setTurnHint("市面上已有的，落地的创意工坊中，ui/皮肤由用户更改是怎么设计的");
+    const result = await host.execute("canvas_set", {
+      items: [
+        {
+          kind: "note",
+          title: "星奈就绪",
+          body: "白板还没内容，等你给题目。\n我能直接上板的四类东西：概念/定义 → 知识卡，人物对照用 markdown，数字用柱状图。"
+        }
+      ]
+    });
+    expect(result).toContain("拒绝");
+    expect(repo.list(sessionId)).toHaveLength(0);
+  });
+
+  it("缺 labels 的图表整页不写入", async () => {
+    const { host, sessionId, repo } = await makeHost();
+    await host.execute("canvas_put", { kind: "note", title: "旧", body: "留着" });
+    const result = await host.execute("canvas_set", {
+      items: [
+        {
+          kind: "chart",
+          title: "上海气温",
+          chartType: "line",
+          series: [{ name: "最高", values: [20, 22] }]
+        }
+      ]
+    });
+    expect(result).toContain("上海气温");
+    expect(result).toContain("labels");
+    expect(repo.list(sessionId)).toHaveLength(1);
+    expect(repo.list(sessionId)[0]?.title).toBe("旧");
+    expect(host.takeValidationError()).toContain("labels");
+  });
+
+  it("只有 columns 没有行的表拒绝", async () => {
+    const { host, sessionId, repo } = await makeHost();
+    const result = await host.execute("canvas_set", {
+      items: [{ kind: "table", title: "气温表", columns: ["日", "高"], rows: [] }]
+    });
+    expect(result).toContain("气温表");
+    expect(result).toContain("rows");
+    expect(repo.list(sessionId)).toHaveLength(0);
+  });
+
+  it("整页里一张坏卡导致一张都不写", async () => {
+    const { host, sessionId, repo } = await makeHost();
+    const result = await host.execute("canvas_set", {
+      items: [
+        { kind: "card", title: "说明", body: "这是一段可读的说明文字。" },
+        { kind: "chart", title: "气温", chartType: "line", labels: ["一"] }
+      ]
+    });
+    expect(result).toContain("气温");
+    expect(result).toContain("series");
+    expect(repo.list(sessionId)).toHaveLength(0);
+    expect(host.takeChanges()).toHaveLength(0);
+  });
+
+  it("写库成功后清掉本回合校验错误", async () => {
+    const { host } = await makeHost();
+    await host.execute("canvas_set", {
+      items: [{ kind: "chart", title: "坏图", chartType: "line" }]
+    });
+    await host.execute("canvas_set", {
+      items: [{ kind: "note", title: "好卡", body: "正文。" }]
+    });
+    expect(host.takeValidationError()).toBeUndefined();
+  });
+
+  it("没交页时没有 validationError", async () => {
+    const { host } = await makeHost();
+    expect(host.takeValidationError()).toBeUndefined();
+  });
+
+  it("失败快照不能恢复成当前活板", async () => {
+    const db = new DatabaseSync(":memory:");
+    migrateDb(db);
+    const sessions = new SessionRepo(db);
+    const session = await sessions.createSession("画布", "desk");
+    const userId = await sessions.appendMessage({
+      sessionId: session.id,
+      role: "user",
+      content: "天气"
+    });
+    const repo = new CanvasRepo(db);
+    repo.upsert({ sessionId: session.id, kind: "note", title: "现", payload: { body: "now" } });
+    repo.saveSnapshot({
+      turnId: "turn-fail",
+      sessionId: session.id,
+      userMessageId: userId as string,
+      document: {
+        version: 1,
+        turnId: "turn-fail",
+        sessionId: session.id,
+        items: [],
+        validationError: "「气温」series 为空"
+      }
+    });
+    expect(repo.restoreFromSnapshot(session.id, "turn-fail")).toBeNull();
+    expect(repo.list(session.id)[0]?.title).toBe("现");
   });
 });

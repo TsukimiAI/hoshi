@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const DB_SCHEMA_VERSION = 5;
+export const DB_SCHEMA_VERSION = 6;
 
 let lastIsoMs = 0;
 
@@ -155,12 +155,21 @@ function migrateCanvasV5(db: DatabaseSync): void {
   `);
 }
 
+const SCHEMA_V6 = `
+ALTER TABLE memories ADD COLUMN embedded INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS memory_vec_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  dim INTEGER NOT NULL
+);
+`;
+
 const MIGRATIONS: Array<string | ((db: DatabaseSync) => void)> = [
   SCHEMA_V1,
   SCHEMA_V2,
   SCHEMA_V3,
   SCHEMA_V4,
-  migrateCanvasV5
+  migrateCanvasV5,
+  SCHEMA_V6
 ];
 
 export function openDatabase(dbPath: string, opts?: { allowExtension?: boolean }): DatabaseSync {

@@ -444,26 +444,33 @@ async function bootstrap() {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       throw new Error("仅支持 http/https");
     }
-    const res = await fetch(parsed.toString(), {
-      signal: AbortSignal.timeout(20000),
-      redirect: "follow",
-      headers: {
-        Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "User-Agent": "Hoshi/0.1 (desktop workbench; knowledge cards)"
+    if (parsed.hostname.toLowerCase() === "thumb.wikimedia.org") {
+      parsed.hostname = "upload.wikimedia.org";
+    }
+    try {
+      const res = await fetch(parsed.toString(), {
+        signal: AbortSignal.timeout(20000),
+        redirect: "follow",
+        headers: {
+          Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+          "User-Agent": "Hoshi/0.1 (desktop workbench; knowledge cards)"
+        }
+      });
+      if (!res.ok) {
+        return { mime: "", data: "" };
       }
-    });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+      const mime = (res.headers.get("content-type") ?? "application/octet-stream").split(";")[0].trim();
+      if (!mime.startsWith("image/")) {
+        return { mime: "", data: "" };
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.byteLength > 6 * 1024 * 1024) {
+        return { mime: "", data: "" };
+      }
+      return { mime, data: buf.toString("base64") };
+    } catch {
+      return { mime: "", data: "" };
     }
-    const mime = (res.headers.get("content-type") ?? "application/octet-stream").split(";")[0].trim();
-    if (!mime.startsWith("image/")) {
-      throw new Error("不是图片");
-    }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > 6 * 1024 * 1024) {
-      throw new Error("图片过大");
-    }
-    return { mime, data: buf.toString("base64") };
   });
 
   ipcMain.handle("hoshi:parse-docx", async (_event, b64: unknown) => {

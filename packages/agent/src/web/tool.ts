@@ -77,6 +77,41 @@ export type WebSearchFn = (
   signal?: AbortSignal
 ) => Promise<{ hits: WebHit[]; optionalAnswer: string }>;
 
+type SearchGroup = { hits: WebHit[]; optionalAnswer: string; error?: string };
+
+function isRetryableSearchError(message: string): boolean {
+  return /fetch failed|ECONN|ENOTFOUND|ETIMEDOUT|network|timeout|aborted|503|429/i.test(message);
+}
+
+async function searchOnce(
+  search: WebSearchFn,
+  query: string,
+  apiKey: string,
+  signal?: AbortSignal
+): Promise<SearchGroup> {
+  let lastError = "检索失败";
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (signal?.aborted) {
+      return { hits: [], optionalAnswer: "", error: "超时" };
+    }
+    try {
+      return await search(query, apiKey, signal);
+    } catch (error) {
+      lastError =
+        error instanceof Error
+          ? /aborted|timeout/i.test(error.message) || error.name === "AbortError"
+            ? "超时"
+            : error.message
+          : "检索失败";
+      if (!isRetryableSearchError(lastError) || attempt === 1) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  }
+  return { hits: [], optionalAnswer: "", error: lastError };
+}
+
 export function resolveDeepseekSearchKey(input: {
   deepseekApiKey: string;
   modelApiKey: string;
@@ -137,14 +172,22 @@ export class WebToolHost implements PluginHost {
     const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
     try {
       const groups = await Promise.all(
-        queries.map((query) => this.search(query, apiKey, controller.signal))
+        queries.map((query) => searchOnce(this.search, query, apiKey, controller.signal))
       );
       const hits = mergeHitsByUrl(groups.map((item) => item.hits));
-      if (hits.length === 0) {
-        return "联网失败：没有可用来源";
+      const optionalAnswer = groups
+        .map((item) => item.optionalAnswer)
+        .filter(Boolean)
+        .join("\n");
+      if (hits.length === 0 && !optionalAnswer) {
+        const failed = groups.find((item) => item.error);
+        return `联网失败：${failed?.error ?? "没有可用来源"}`;
       }
-      const optionalAnswer = groups.map((item) => item.optionalAnswer).filter(Boolean).join("\n");
-      return formatSearchResult(queries, hits, optionalAnswer);
+      return formatSearchResult(
+        queries,
+        hits,
+        optionalAnswer
+      );
     } catch (error) {
       const detail =
         error instanceof Error
@@ -152,7 +195,7 @@ export class WebToolHost implements PluginHost {
             ? "超时"
             : error.message
           : "检索失败";
-      return `联网失败：整批结果已丢弃 · ${detail}`;
+      return `联网失败：${detail}`;
     } finally {
       clearTimeout(timer);
     }

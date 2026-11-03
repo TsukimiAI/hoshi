@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildIntegratePrompt, composeTurnHint, extractDeskTopic, extractPortraitName, extractPortraitNames, knowledgeHitLooksEmpty, knowledgeRoute, knowledgeSearchQuery, looksLikeCompareQuery, looksLikePersonQuery, looksLikeUsableWebBrief, looksLikeWorkQuery, portraitLookupQuery, shouldAttachIllustration, shouldWebSearch } from "./plan";
+import { buildDeskCanvasPrompt, buildIntegratePrompt, classifyDeskTurn, composeTurnHint, extractDeskTopic, extractPortraitName, extractPortraitNames, knowledgeHitLooksEmpty, knowledgeRoute, knowledgeSearchQuery, looksLikeCompareQuery, looksLikePersonQuery, looksLikeUsableWebBrief, looksLikeWorkQuery, portraitLookupQuery, shouldAttachIllustration, shouldWebSearch } from "./plan";
 
 describe("shouldWebSearch", () => {
   it("天气和股价要联网", () => {
@@ -27,6 +27,13 @@ describe("shouldWebSearch", () => {
       kind: "lookup",
       query: "MIT6里BSS段是什么"
     });
+    expect(knowledgeSearchQuery("总结下我知识库里MIT6的内容")).toBe("MIT6");
+    expect(knowledgeRoute("总结下我知识库里MIT6的内容")).toEqual({
+      kind: "summarize",
+      query: "MIT6"
+    });
+    expect(classifyDeskTurn("总结下我知识库里MIT6的内容").kind).toBe("note");
+    expect(extractDeskTopic("总结下我知识库里MIT6的内容")).toBe("MIT6");
     expect(knowledgeRoute("本月上海天气").kind).toBe("skip");
     expect(knowledgeRoute("你好").kind).toBe("skip");
   });
@@ -34,6 +41,16 @@ describe("shouldWebSearch", () => {
   it("人物介绍要联网", () => {
     expect(looksLikePersonQuery("爱因斯坦是谁")).toBe(true);
     expect(shouldWebSearch("爱因斯坦是谁")).toBe(true);
+    expect(looksLikePersonQuery("我想了解本周上海天气")).toBe(false);
+    expect(looksLikePersonQuery("我想了解一个月内上海的温度情况")).toBe(false);
+    expect(classifyDeskTurn("我想了解一个月内上海的温度情况").kind).toBe("live");
+    expect(extractPortraitName("我想了解一个月内上海的温度情况")).toBe("");
+    expect(shouldAttachIllustration({ hint: "我想了解一个月内上海的温度情况", title: "温度情况" })).toBe(false);
+    expect(buildDeskCanvasPrompt("live")).toContain("时效数字");
+    expect(buildDeskCanvasPrompt("live")).toContain("kind=chart");
+    expect(buildDeskCanvasPrompt("live")).not.toContain("必须调用 canvas_set");
+    expect(buildDeskCanvasPrompt("concept")).not.toContain("必须调用 canvas_set");
+    expect(buildDeskCanvasPrompt("person")).toContain("数字从本轮摘录");
     expect(looksLikePersonQuery("我想了解椎名真昼，可以在萌娘百科")).toBe(true);
     expect(shouldWebSearch("我想了解椎名真昼，可以在萌娘百科")).toBe(true);
     expect(extractPortraitName("我想了解椎名真昼，可以在萌娘百科")).toBe("椎名真昼");
@@ -109,6 +126,27 @@ describe("buildIntegratePrompt", () => {
     expect(text).toContain("固有知识");
   });
 
+  it("知识库没命中时禁止编造讲义", () => {
+    const text = buildIntegratePrompt({
+      web: false,
+      kbEnabled: true,
+      kbBody: null
+    });
+    expect(text).toContain("没有与当前问题相关的文档");
+    expect(text).toContain("禁止用固有知识编造");
+  });
+
+  it("检索过但没有数字时，不要说没开联网", () => {
+    const text = buildIntegratePrompt({
+      web: true,
+      webSearched: true,
+      kbEnabled: false,
+      kbBody: null
+    });
+    expect(text).toContain("已经检索过");
+    expect(text).not.toContain("联网：未开启");
+  });
+
   it("画布工具联网不预填摘录", () => {
     const text = buildIntegratePrompt({
       web: true,
@@ -140,5 +178,41 @@ describe("knowledgeHitLooksEmpty", () => {
   it("识别空结果", () => {
     expect(knowledgeHitLooksEmpty("知识库没有与该问题相关的文档。")).toBe(true);
     expect(knowledgeHitLooksEmpty("[1] 《笔记》内容")).toBe(false);
+  });
+});
+
+describe("router 六道金标", () => {
+  it("整理知识库讲义是 summarize + 不联网 + note", () => {
+    const text = "整理一下知识库里操作系统讲义";
+    expect(knowledgeRoute(text)).toEqual({ kind: "summarize", query: "操作系统" });
+    expect(shouldWebSearch(text)).toBe(false);
+    expect(classifyDeskTurn(text).kind).toBe("note");
+  });
+
+  it("梳理我的笔记是 summarize + 不联网 + note", () => {
+    const text = "梳理一下我的操作系统笔记";
+    expect(knowledgeRoute(text)).toEqual({ kind: "summarize", query: "操作系统" });
+    expect(shouldWebSearch(text)).toBe(false);
+    expect(classifyDeskTurn(text).kind).toBe("note");
+  });
+
+  it("对比人物仍 lookup 且联网", () => {
+    const text = "对比分析孙悟空和哪吒的区别";
+    expect(knowledgeRoute(text).kind).toBe("lookup");
+    expect(shouldWebSearch(text)).toBe(true);
+    expect(classifyDeskTurn(text).kind).toBe("compare");
+  });
+
+  it("崩铁现在仍 lookup 且联网", () => {
+    const text = "崩铁现在数值膨胀严重，哪些角色还能使用？";
+    expect(knowledgeRoute(text).kind).toBe("lookup");
+    expect(shouldWebSearch(text)).toBe(true);
+    expect(classifyDeskTurn(text).kind).toBe("work");
+  });
+
+  it("虚拟内存和有没有养猫手册不误收成笔记总结", () => {
+    expect(knowledgeRoute("解释一下虚拟内存").kind).toBe("lookup");
+    expect(shouldWebSearch("解释一下虚拟内存")).toBe(true);
+    expect(knowledgeRoute("知识库里有没有养猫手册")).toEqual({ kind: "lookup", query: "知识库里有没有养猫手册" });
   });
 });

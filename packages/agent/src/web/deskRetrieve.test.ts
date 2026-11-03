@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDeskSearchQueries, excerptMatchesQuestion, wikiUrlsFromSearchRaw } from "./deskRetrieve";
+import { buildDeskSearchQueries, excerptMatchesQuestion, pageUrlsFromSearchRaw, weatherUrlsFromSearchRaw, wikiUrlsFromSearchRaw } from "./deskRetrieve";
 
 describe("buildDeskSearchQueries", () => {
   it("无人名整理题用作品主题查询，不用整句", () => {
@@ -53,10 +53,39 @@ describe("buildDeskSearchQueries", () => {
     );
   });
 
+  it("天气问句按预报检索，不加成设定，也不沿用上一页角色", () => {
+    const queries = buildDeskSearchQueries("我想了解本周上海天气", "拉海洛的巫女大人指的是绯雪");
+    expect(queries[0]).toBe("本周上海天气");
+    expect(queries).toContain("上海 天气预报");
+    expect(queries).toContain("上海 每日最高最低气温");
+    expect(queries.every((item) => !item.includes("设定") && !item.includes("绯雪"))).toBe(true);
+  });
+
+  it("温度问句也按预报检索，不加设定", () => {
+    const queries = buildDeskSearchQueries("我想了解一个月内上海的温度情况", "指的是绯雪");
+    expect(queries.some((item) => item.includes("上海") && item.includes("温度"))).toBe(true);
+    expect(queries).toContain("上海 天气预报");
+    expect(queries.every((item) => !item.includes("设定") && !item.includes("绯雪"))).toBe(true);
+  });
+
+  it("一个月以来问句城市是上海，并带近一个月气温", () => {
+    const queries = buildDeskSearchQueries("我想了解一个月以来上海的天气情况");
+    expect(queries.every((item) => !item.includes("以来上海"))).toBe(true);
+    expect(queries).toContain("上海 天气预报");
+    expect(queries).toContain("上海 近一个月 每日最高最低气温");
+    expect(queries.every((item) => !item.includes("设定"))).toBe(true);
+  });
+
   it("有主题的整理题不混入旧卡人名", () => {
     const queries = buildDeskSearchQueries("三体中几个重要角色的名字，人设和重要剧情是怎样的", "指的是绯雪");
     expect(queries.some((item) => item.includes("三体"))).toBe(true);
     expect(queries.every((item) => !item.includes("绯雪"))).toBe(true);
+  });
+
+  it("概念题按问句检索，不改成维基人设", () => {
+    const queries = buildDeskSearchQueries("解释一下虚拟内存");
+    expect(queries.some((item) => item.includes("虚拟内存"))).toBe(true);
+    expect(queries.every((item) => !item.includes("维基") && !item.includes("人设"))).toBe(true);
   });
 });
 
@@ -77,6 +106,42 @@ describe("wikiUrlsFromSearchRaw", () => {
    https://zh.wikipedia.org/wiki/重返未来1999`;
     const urls = wikiUrlsFromSearchRaw(raw, "重返未来1999中最强，最保值的角色是哪个");
     expect(urls).toEqual(["https://zh.wikipedia.org/wiki/重返未来1999"]);
+  });
+});
+
+describe("pageUrlsFromSearchRaw", () => {
+  it("作品题优先抓普通网页，维基只作补充", () => {
+    const raw = `来源：
+1. 重返未来1999强度榜
+   https://game.example.com/1999-tier
+2. 维基
+   https://zh.wikipedia.org/wiki/重返未来1999`;
+    const urls = pageUrlsFromSearchRaw(raw, "重返未来1999中最强，最保值的角色是哪个", "work");
+    expect(urls[0]).toBe("https://game.example.com/1999-tier");
+    expect(urls).toContain("https://zh.wikipedia.org/wiki/重返未来1999");
+  });
+
+  it("人物题仍优先维基/萌百", () => {
+    const raw = `来源：
+1. 博客
+   https://blog.example.com/einstein
+2. 维基
+   https://zh.wikipedia.org/wiki/爱因斯坦`;
+    const urls = pageUrlsFromSearchRaw(raw, "爱因斯坦是谁", "person");
+    expect(urls[0]).toBe("https://zh.wikipedia.org/wiki/爱因斯坦");
+  });
+});
+
+describe("weatherUrlsFromSearchRaw", () => {
+  it("时效题收下天气预报链接，跳过百科", () => {
+    const urls = weatherUrlsFromSearchRaw(`来源：
+1. 上海天气
+   https://weather.example.com/shanghai
+2. 百科
+   https://baike.baidu.com/item/x
+3. 角色
+   https://zh.moegirl.org.cn/Foo`);
+    expect(urls).toEqual(["https://weather.example.com/shanghai"]);
   });
 });
 

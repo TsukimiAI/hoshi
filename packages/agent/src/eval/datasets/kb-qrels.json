@@ -1,0 +1,26 @@
+{
+  "name": "kb-qrels",
+  "version": "1",
+  "cases": [
+    { "id": "q-cat-sleep", "query": "猫一天睡多久？", "expectDocTitle": "养猫手册" },
+    { "id": "q-litter", "query": "猫砂怎么清理", "expectDocTitle": "养猫手册" },
+    { "id": "q-protein", "query": "猫需要什么样的饮食", "expectDocTitle": "养猫手册" },
+    { "id": "q-entangle", "query": "什么是量子纠缠？", "expectDocTitle": "量子物理入门" },
+    { "id": "q-superpose", "query": "叠加态是什么意思", "expectDocTitle": "量子物理入门" },
+    { "id": "q-collapse", "query": "测量为什么会让量子态坍缩", "expectDocTitle": "量子物理入门" },
+    { "id": "q-invest", "query": "普通人怎么投资股票？", "expectDocTitle": "股票投资" },
+    { "id": "q-dca", "query": "定投适合什么人", "expectDocTitle": "股票投资" },
+    { "id": "q-risk", "query": "股票为什么要分散风险", "expectDocTitle": "股票投资" },
+    { "id": "q-pork", "query": "红烧肉怎么做", "expectDocTitle": "家常菜谱" },
+    { "id": "q-veg", "query": "炒青菜怎样保绿", "expectDocTitle": "家常菜谱" },
+    { "id": "q-rice", "query": "煮饭水和米的比例", "expectDocTitle": "家常菜谱" },
+    { "id": "q-pagetable", "query": "操作系统里的页表做什么", "expectDocTitle": "操作系统讲义" },
+    { "id": "q-fault", "query": "缺页中断会怎样", "expectDocTitle": "操作系统讲义" },
+    { "id": "q-bss", "query": "MIT6里BSS段是什么", "expectDocTitle": "MIT6" },
+    { "id": "q-textseg", "query": "文本段里放什么", "expectDocTitle": "MIT6" },
+    { "id": "q-passport", "query": "出行前护照要看什么", "expectDocTitle": "旅行攻略" },
+    { "id": "q-ticket", "query": "淡季机票贵不贵", "expectDocTitle": "旅行攻略" },
+    { "id": "q-vm", "query": "虚拟内存让进程看到什么", "expectDocTitle": "虚拟内存入门" },
+    { "id": "q-swap", "query": "交换区用来放什么", "expectDocTitle": "虚拟内存入门" }
+  ]
+}

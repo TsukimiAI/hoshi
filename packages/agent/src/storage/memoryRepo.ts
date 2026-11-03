@@ -1,6 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { MemoryItem, MemoryKind, MemoryMeta } from "@hoshi/shared";
+import type { EmbeddingProvider } from "../knowledge/embedding";
+import type { MemorySimilarHit } from "../memory/apply";
+import { MEMORY_EXTRACT_NEIGHBORS } from "../memory/extract";
+import {
+  MEMORY_ARCHIVE_MAX,
+  MEMORY_QUERY_EMBED_TIMEOUT_MS,
+  selectMemoriesForInject
+} from "../memory/inject";
+import {
+  deleteMemoryVector,
+  ensureMemoryVecReady,
+  searchMemoryVectors,
+  upsertMemoryVector
+} from "../memory/vec";
 import { nowIso } from "./db";
 
 export const MEMORY_TABLE_MAX = 200;
@@ -57,8 +71,26 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(",");
 }
 
+async function embedWithTimeout(
+  embedding: EmbeddingProvider,
+  texts: string[],
+  timeoutMs: number
+): Promise<number[][]> {
+  return await Promise.race([
+    embedding.embed(texts),
+    new Promise<number[][]>((_, reject) => {
+      setTimeout(() => reject(new Error("embed timeout")), timeoutMs);
+    })
+  ]);
+}
+
 export class MemoryRepo {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly embedding?: EmbeddingProvider
+  ) {
+    ensureMemoryVecReady(db);
+  }
 
   async listActive(limit = 200): Promise<MemoryItem[]> {
     const safeLimit = Math.max(1, Math.min(limit, 400));
@@ -109,20 +141,165 @@ export class MemoryRepo {
     return Number(row?.n ?? 0);
   }
 
-  private async evictIfNeeded(): Promise<void> {
-    while ((await this.count()) >= MEMORY_TABLE_MAX) {
-      const superseded = this.db
-        .prepare(`DELETE FROM memories WHERE id = (SELECT id FROM memories WHERE status = 'superseded' ORDER BY updated_at ASC LIMIT 1)`)
-        .run();
-      if (superseded.changes > 0) {
+  private markEmbedded(id: string, embedded: boolean): void {
+    try {
+      this.db.prepare(`UPDATE memories SET embedded = ? WHERE id = ?`).run(embedded ? 1 : 0, id);
+    } catch {
+      // schema 未升到 v6 时忽略
+    }
+  }
+
+  private async embedText(text: string, timeoutMs?: number): Promise<number[] | null> {
+    if (!this.embedding) {
+      return null;
+    }
+    try {
+      const [vec] = await embedWithTimeout(
+        this.embedding,
+        [text],
+        timeoutMs ?? MEMORY_QUERY_EMBED_TIMEOUT_MS
+      );
+      return vec ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  async syncVector(id: string, text: string): Promise<void> {
+    const vec = await this.embedText(text, 15000);
+    if (!vec) {
+      return;
+    }
+    try {
+      upsertMemoryVector(this.db, id, vec);
+      this.markEmbedded(id, true);
+    } catch {
+      this.markEmbedded(id, false);
+    }
+  }
+
+  private dropVector(id: string): void {
+    try {
+      deleteMemoryVector(this.db, id);
+    } catch {
+      // vec 表尚未建立
+    }
+    this.markEmbedded(id, false);
+  }
+
+  async retrieveForInject(query: string): Promise<MemoryItem[]> {
+    const items = await this.listActive();
+    const vec = await this.embedText(query, MEMORY_QUERY_EMBED_TIMEOUT_MS);
+    if (!vec) {
+      return selectMemoriesForInject(items);
+    }
+    try {
+      const hits = searchMemoryVectors(this.db, vec, MEMORY_ARCHIVE_MAX * 3);
+      return selectMemoriesForInject(items, query, hits);
+    } catch {
+      return selectMemoriesForInject(items);
+    }
+  }
+
+  async neighborsForExtract(turnText: string): Promise<MemoryItem[]> {
+    const items = await this.listActive();
+    const vec = await this.embedText(turnText, MEMORY_QUERY_EMBED_TIMEOUT_MS);
+    if (!vec) {
+      return items.slice(0, MEMORY_EXTRACT_NEIGHBORS);
+    }
+    try {
+      const hits = searchMemoryVectors(this.db, vec, MEMORY_EXTRACT_NEIGHBORS);
+      const byId = new Map(items.map((item) => [item.id, item]));
+      const picked: MemoryItem[] = [];
+      const used = new Set<string>();
+      for (const hit of hits) {
+        const item = byId.get(hit.id);
+        if (!item || used.has(item.id)) {
+          continue;
+        }
+        used.add(item.id);
+        picked.push(item);
+        if (picked.length >= MEMORY_EXTRACT_NEIGHBORS) {
+          break;
+        }
+      }
+      if (picked.length < MEMORY_EXTRACT_NEIGHBORS) {
+        for (const item of items) {
+          if (used.has(item.id)) {
+            continue;
+          }
+          picked.push(item);
+          if (picked.length >= MEMORY_EXTRACT_NEIGHBORS) {
+            break;
+          }
+        }
+      }
+      return picked;
+    } catch {
+      return items.slice(0, MEMORY_EXTRACT_NEIGHBORS);
+    }
+  }
+
+  async similarForTexts(texts: string[]): Promise<Map<string, MemorySimilarHit[]>> {
+    const out = new Map<string, MemorySimilarHit[]>();
+    for (const text of texts) {
+      const vec = await this.embedText(text, MEMORY_QUERY_EMBED_TIMEOUT_MS);
+      if (!vec) {
+        out.set(text, []);
         continue;
       }
-      const soft = this.db
-        .prepare(
-          `DELETE FROM memories WHERE id = (SELECT id FROM memories WHERE status = 'active' AND kind IN ('other', 'habit') ORDER BY updated_at ASC LIMIT 1)`
-        )
-        .run();
-      if (soft.changes === 0) {
+      try {
+        out.set(text, searchMemoryVectors(this.db, vec, 5));
+      } catch {
+        out.set(text, []);
+      }
+    }
+    return out;
+  }
+
+  async backfillEmbeddings(): Promise<void> {
+    if (!this.embedding) {
+      return;
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT id, text FROM memories WHERE status = 'active' AND COALESCE(embedded, 0) = 0 LIMIT 200`
+      )
+      .all() as unknown as Array<{ id: string; text: string }>;
+    for (const row of rows) {
+      await this.syncVector(row.id, row.text);
+    }
+  }
+
+  private deleteOldest(sql: string): string | null {
+    const row = this.db.prepare(sql).get() as { id?: string } | undefined;
+    const id = row?.id;
+    if (!id) {
+      return null;
+    }
+    this.dropVector(id);
+    this.db.prepare(`DELETE FROM memories WHERE id = ?`).run(id);
+    return id;
+  }
+
+  private async evictIfNeeded(): Promise<void> {
+    while ((await this.count()) >= MEMORY_TABLE_MAX) {
+      const superseded = this.deleteOldest(
+        `SELECT id FROM memories WHERE status = 'superseded' ORDER BY updated_at ASC LIMIT 1`
+      );
+      if (superseded) {
+        continue;
+      }
+      const unacked = this.deleteOldest(
+        `SELECT id FROM memories WHERE status = 'active' AND acked_at IS NULL AND kind IN ('other', 'habit') ORDER BY updated_at ASC LIMIT 1`
+      );
+      if (unacked) {
+        continue;
+      }
+      const acked = this.deleteOldest(
+        `SELECT id FROM memories WHERE status = 'active' AND acked_at IS NOT NULL AND kind IN ('other', 'habit') ORDER BY updated_at ASC LIMIT 1`
+      );
+      if (!acked) {
         break;
       }
     }
@@ -146,7 +323,9 @@ export class MemoryRepo {
       .get(id, text, kind, topic, sourceSessionId, meta ? JSON.stringify(meta) : "{}", now, now) as
       | Record<string, unknown>
       | undefined;
-    return mapRow(row as Record<string, unknown>);
+    const item = mapRow(row as Record<string, unknown>);
+    await this.syncVector(item.id, item.text);
+    return item;
   }
 
   async updateText(
@@ -172,7 +351,11 @@ export class MemoryRepo {
     const row = this.db
       .prepare(`UPDATE memories SET ${sets.join(", ")} WHERE id = ? AND status = 'active' RETURNING *`)
       .get(...values) as Record<string, unknown> | undefined;
-    return row ? mapRow(row) : null;
+    const item = row ? mapRow(row) : null;
+    if (item) {
+      await this.syncVector(item.id, item.text);
+    }
+    return item;
   }
 
   async restore(id: string): Promise<MemoryItem | null> {
@@ -181,13 +364,20 @@ export class MemoryRepo {
         `UPDATE memories SET status = 'active', superseded_by = NULL, acked_at = ?, updated_at = ? WHERE id = ? AND status = 'superseded' RETURNING *`
       )
       .get(nowIso(), nowIso(), id) as Record<string, unknown> | undefined;
-    return row ? mapRow(row) : null;
+    const item = row ? mapRow(row) : null;
+    if (item) {
+      await this.syncVector(item.id, item.text);
+    }
+    return item;
   }
 
   async supersede(id: string, supersededBy: string | null = null): Promise<boolean> {
     const result = this.db
       .prepare(`UPDATE memories SET status = 'superseded', superseded_by = ?, updated_at = ? WHERE id = ? AND status = 'active'`)
       .run(supersededBy, nowIso(), id);
+    if (result.changes > 0) {
+      this.dropVector(id);
+    }
     return result.changes > 0;
   }
 }

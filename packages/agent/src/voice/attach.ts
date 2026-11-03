@@ -13,8 +13,15 @@ import { applyGsvWeights } from "./gptSovits";
 import { createTtsEngine, type TtsEngine } from "./tts";
 import { sanitizeTtsText } from "./ttsText";
 import { WhisperAsrClient } from "./whisper";
-import { emitTtsPcm, stopTtsPlayback } from "./ttsSink";
+import { stopTtsPlayback } from "./ttsSink";
 import { wsAuthorized } from "../agentAuth";
+import {
+  BARGE_RESUME_MS,
+  decideAsrFinal,
+  nextTurnFromFinally,
+  playbackWatchdogMs,
+  shouldAcceptTtsEnd
+} from "./turn";
 
 const IDLE_MS = 120_000;
 
@@ -58,11 +65,16 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
   let lastRate = 22050;
   let awaitingDrain = false;
   let playbackTimer: ReturnType<typeof setTimeout> | null = null;
+  let bargeResumeTimer: ReturnType<typeof setTimeout> | null = null;
   let chatAbort: AbortController | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
   let pendingFinal: string | null = null;
   let runTurnActive = false;
+  let epoch = 0;
+  let barged = false;
+  let asrFeed = true;
+  let funAsrRestarts = 0;
   const startedAt = Date.now();
 
   const clearIdle = (): void => {
@@ -75,7 +87,7 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
   const bumpIdle = (): void => {
     clearIdle();
     idleTimer = setTimeout(() => {
-      sendJson(ws, { type: "status", phase: "idle_stop" });
+      sendJson(ws, { type: "status", phase: "idle_stop", epoch });
       ws.close();
     }, IDLE_MS);
   };
@@ -87,31 +99,61 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
     }
   };
 
+  const clearBargeResume = (): void => {
+    if (bargeResumeTimer) {
+      clearTimeout(bargeResumeTimer);
+      bargeResumeTimer = null;
+    }
+  };
+
   let asrKind: "fun-asr" | "whisper" = "fun-asr";
 
   const enterListening = (): void => {
     clearPlaybackWait();
+    clearBargeResume();
     awaitingDrain = false;
     ttsPlaying = false;
     turnBusy = false;
-    sendJson(ws, { type: "status", phase: "listening", asr: asrKind });
+    barged = false;
+    asrFeed = true;
+    sendJson(ws, { type: "status", phase: "listening", asr: asrKind, epoch });
   };
 
-  const waitPlayback = (): void => {
+  const finishPlayback = (forEpoch: number): void => {
+    if (epoch !== forEpoch) {
+      return;
+    }
+    if (!awaitingDrain && !ttsPlaying) {
+      return;
+    }
+    clearPlaybackWait();
+    awaitingDrain = false;
+    ttsPlaying = false;
+    sendJson(ws, { type: "tts_done", epoch });
+    enterListening();
+  };
+
+  const waitPlayback = (forEpoch: number): void => {
+    if (epoch !== forEpoch) {
+      return;
+    }
     awaitingDrain = true;
+    ttsPlaying = true;
+    asrFeed = false;
+    bumpIdle();
+    sendJson(ws, { type: "tts_flush", epoch: forEpoch });
     clearPlaybackWait();
     const rate = tts?.sampleRate() ?? lastRate;
-    const ms = Math.min(12000, Math.max(800, Math.ceil((pcmBytes / 2 / Math.max(rate, 1)) * 1000) + 700));
+    const ms = playbackWatchdogMs(pcmBytes, rate);
     playbackTimer = setTimeout(() => {
-      sendJson(ws, { type: "tts_done" });
-      enterListening();
+      finishPlayback(forEpoch);
     }, ms);
   };
 
   const emitRate = (rate: number): void => {
     if (rate > 0 && rate !== lastRate) {
       lastRate = rate;
-      sendJson(ws, { type: "tts_format", sampleRate: rate });
+      sendJson(ws, { type: "tts_format", sampleRate: rate, epoch });
     }
   };
 
@@ -123,6 +165,7 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
     voiceSessions = Math.max(0, voiceSessions - 1);
     clearIdle();
     clearPlaybackWait();
+    clearBargeResume();
     chatAbort?.abort();
     asr?.close();
     tts?.cancel();
@@ -132,40 +175,77 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
   };
 
   const bargeIn = (): void => {
-    clearPlaybackWait();
+    epoch += 1;
+    barged = true;
+    asrFeed = true;
     pendingFinal = null;
-    turnBusy = false;
+    clearPlaybackWait();
+    clearBargeResume();
     ttsPlaying = false;
+    awaitingDrain = false;
     chatAbort?.abort();
     chatAbort = null;
     tts?.cancel();
     tts = null;
     stopTtsPlayback();
-    awaitingDrain = false;
-    sendJson(ws, { type: "status", phase: "listening", asr: asrKind });
-    logVoice({ phase: "barge", ms: Date.now() - startedAt });
+    bumpIdle();
+    bargeResumeTimer = setTimeout(() => {
+      if (closed || pendingFinal || runTurnActive) {
+        if (!pendingFinal && !runTurnActive) {
+          enterListening();
+        }
+        return;
+      }
+      enterListening();
+    }, BARGE_RESUME_MS);
+    logVoice({ phase: "barge", ms: Date.now() - startedAt, epoch });
   };
 
   const startTurn = (text: string): void => {
+    epoch += 1;
+    const myEpoch = epoch;
     turnBusy = true;
-    void runTurn(text).finally(() => {
+    barged = false;
+    asrFeed = false;
+    pendingFinal = null;
+    clearBargeResume();
+    bumpIdle();
+    void runTurn(text, myEpoch).finally(() => {
       runTurnActive = false;
       if (closed) {
         return;
       }
-      const next = pendingFinal;
+      const next = nextTurnFromFinally({
+        myEpoch,
+        currentEpoch: epoch,
+        pendingFinal,
+        ttsPlaying,
+        awaitingDrain
+      });
       pendingFinal = null;
-      if (next) {
-        startTurn(next);
+      if (next.start) {
+        startTurn(next.start);
         return;
       }
-      if (!ttsPlaying && !awaitingDrain) {
+      if (next.clearBusy) {
         turnBusy = false;
+      }
+      if (next.enterListening) {
+        enterListening();
+        return;
+      }
+      if (barged && !pendingFinal) {
+        clearBargeResume();
+        bargeResumeTimer = setTimeout(() => {
+          if (!closed && !pendingFinal && !runTurnActive) {
+            enterListening();
+          }
+        }, BARGE_RESUME_MS);
       }
     });
   };
 
-  const runTurn = async (text: string): Promise<void> => {
+  const runTurn = async (text: string, myEpoch: number): Promise<void> => {
     if (text.length < 2) {
       return;
     }
@@ -175,11 +255,14 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
     const signal = chatAbort.signal;
     pcmBytes = 0;
     awaitingDrain = false;
-    sendJson(ws, { type: "final", text });
-    sendJson(ws, { type: "status", phase: "generating" });
+    sendJson(ws, { type: "final", text, epoch: myEpoch });
+    sendJson(ws, { type: "status", phase: "generating", epoch: myEpoch });
     const llm = deps.getLlm();
     const snap = llm.snapshot();
     const { history, compactUsage } = await deps.buildHistory(sessionId);
+    if (signal.aborted || myEpoch !== epoch) {
+      return;
+    }
     const voice = deps.getVoiceSettings();
     const ds = resolveDashscopeCreds(voice, snap);
     const speakOn = voice.ttsEnabled !== false;
@@ -191,17 +274,19 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
           voice,
           ds,
           (pcm) => {
+            if (myEpoch !== epoch) {
+              return;
+            }
             pcmBytes += pcm.length;
             if (pcmBytes === pcm.length) {
-              logVoice({ phase: "tts_pcm", n: pcm.length, rate: lastRate });
+              logVoice({ phase: "tts_pcm", n: pcm.length, rate: lastRate, epoch: myEpoch });
             }
-            emitTtsPcm(pcm, lastRate);
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(pcm, { binary: true, compress: false });
             }
           },
           () => {
-            waitPlayback();
+            waitPlayback(myEpoch);
           },
           (rate) => {
             emitRate(rate);
@@ -210,28 +295,30 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "tts failed";
-      sendJson(ws, { type: "error", message });
+      sendJson(ws, { type: "error", message, epoch: myEpoch });
     }
     tts = engine;
     const ttsReady = engine
       ? engine
           .start()
           .then(() => {
-            if (signal.aborted || !engine) {
+            if (signal.aborted || myEpoch !== epoch || !engine) {
               return;
             }
             lastRate = engine.sampleRate();
-            sendJson(ws, { type: "tts_format", sampleRate: lastRate });
+            sendJson(ws, { type: "tts_format", sampleRate: lastRate, epoch: myEpoch });
           })
           .catch((error) => {
             const raw = error instanceof Error ? error.message : "tts failed";
             const message = raw.includes("418") || raw.includes("Model not found")
               ? "TTS 模型/音色无效，已请改用 cosyvoice-v2 + longxiaochun_v2"
               : raw;
-            sendJson(ws, { type: "error", message });
+            sendJson(ws, { type: "error", message, epoch: myEpoch });
             engine?.cancel();
+            if (tts === engine) {
+              tts = null;
+            }
             engine = null;
-            tts = null;
           })
       : Promise.resolve();
     try {
@@ -247,17 +334,18 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
         compactUsage,
         signal
       })) {
-        if (signal.aborted) {
+        if (signal.aborted || myEpoch !== epoch) {
           break;
         }
+        bumpIdle();
         sendJson(ws, event);
         if (engine && event.event === "sentence") {
           await ttsReady;
-          if (engine) {
+          if (engine && myEpoch === epoch) {
             if (!ttsPlaying) {
               ttsPlaying = true;
-              sendJson(ws, { type: "status", phase: "speaking" });
             }
+            sendJson(ws, { type: "status", phase: "speaking", epoch: myEpoch });
             const spoken = sanitizeTtsText(event.data.text);
             if (spoken) {
               await engine.speak(spoken, signal);
@@ -265,31 +353,31 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
           }
         }
       }
-      if (!signal.aborted && engine) {
+      if (!signal.aborted && myEpoch === epoch && engine) {
         await engine.finish();
       }
-      if (!signal.aborted && !engine) {
-        sendJson(ws, { type: "tts_done" });
-        enterListening();
+      if (!signal.aborted && myEpoch === epoch && !engine) {
+        sendJson(ws, { type: "tts_done", epoch: myEpoch });
+        ttsPlaying = false;
+        awaitingDrain = false;
       }
     } catch (error) {
-      if (!signal.aborted) {
+      if (!signal.aborted && myEpoch === epoch) {
         const message = error instanceof Error ? error.message : "voice chat failed";
-        sendJson(ws, { type: "error", message });
+        sendJson(ws, { type: "error", message, epoch: myEpoch });
         logVoice({ phase: "chat", ok: false, ms: Date.now() - startedAt });
       }
       engine?.cancel();
       if (tts === engine) {
         tts = null;
       }
-      if (!signal.aborted) {
-        enterListening();
-      } else {
+      if (!signal.aborted && myEpoch === epoch) {
         ttsPlaying = false;
+        awaitingDrain = false;
       }
       return;
     }
-    if (signal.aborted) {
+    if (signal.aborted || myEpoch !== epoch) {
       engine?.cancel();
       if (tts === engine) {
         tts = null;
@@ -297,7 +385,68 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
       ttsPlaying = false;
       return;
     }
-    logVoice({ phase: "turn", ok: true, ms: Date.now() - startedAt });
+    logVoice({ phase: "turn", ok: true, ms: Date.now() - startedAt, epoch: myEpoch });
+  };
+
+  const onFinal = (finalText: string): void => {
+    bumpIdle();
+    const text = finalText.trim();
+    if (text.length < 2) {
+      return;
+    }
+    const decision = decideAsrFinal({ turnBusy, ttsPlaying, awaitingDrain, barged });
+    if (decision === "drop") {
+      return;
+    }
+    if (decision === "queue") {
+      pendingFinal = text;
+      if (!runTurnActive) {
+        const next = pendingFinal;
+        pendingFinal = null;
+        if (next) {
+          startTurn(next);
+        }
+      }
+      return;
+    }
+    startTurn(text);
+  };
+
+  const onPartial = (partial: string): void => sendJson(ws, { type: "partial", text: partial });
+
+  const openFunAsr = async (voice: VoiceSettings, snap: { apiKey: string; baseUrl: string }): Promise<void> => {
+    const ds = resolveDashscopeCreds(voice, snap);
+    asr?.close();
+    asr = new FunAsrClient(
+      ds.apiKey,
+      ds.baseUrl,
+      onPartial,
+      onFinal,
+      voice.hotwords,
+      voice.hotwordVocabularyId,
+      (usage) => {
+        deps.getLlm().noteUsage("asr", usage, sessionId, "fun-asr-realtime");
+      },
+      (error) => {
+        logVoice({ phase: "asr_failed", message: error.message });
+        if (closed || funAsrRestarts >= 1) {
+          sendJson(ws, { type: "error", message: error.message });
+          return;
+        }
+        funAsrRestarts += 1;
+        void (async () => {
+          try {
+            await openFunAsr(deps.getVoiceSettings(), deps.getLlm().snapshot());
+            sendJson(ws, { type: "status", phase: "listening", asr: "fun-asr", epoch });
+          } catch (restartError) {
+            const message = restartError instanceof Error ? restartError.message : "fun-asr restart failed";
+            sendJson(ws, { type: "error", message });
+          }
+        })();
+      }
+    );
+    await asr.start();
+    asrKind = "fun-asr";
   };
 
   ws.on("message", (raw, isBinary) => {
@@ -305,12 +454,14 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
       return;
     }
     if (isBinary) {
-      asr?.sendPcm(Buffer.from(raw as Buffer));
+      if (asrFeed) {
+        asr?.sendPcm(Buffer.from(raw as Buffer));
+      }
       return;
     }
-    let msg: { type?: string; sessionId?: string };
+    let msg: { type?: string; sessionId?: string; epoch?: number };
     try {
-      msg = JSON.parse(raw.toString()) as { type?: string; sessionId?: string };
+      msg = JSON.parse(raw.toString()) as { type?: string; sessionId?: string; epoch?: number };
     } catch {
       return;
     }
@@ -323,6 +474,10 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
       return;
     }
     if (msg.type === "tts_end") {
+      const msgEpoch = typeof msg.epoch === "number" ? msg.epoch : epoch;
+      if (shouldAcceptTtsEnd({ awaitingDrain, epoch, msgEpoch })) {
+        finishPlayback(msgEpoch);
+      }
       return;
     }
     if (msg.type === "start" && msg.sessionId && !asr) {
@@ -348,48 +503,18 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
               logVoice({ phase: "gsv_weights", ok: false, message });
             }
           }
-          const onFinal = (finalText: string): void => {
-            bumpIdle();
-            const text = finalText.trim();
-            if (text.length < 2) {
-              return;
-            }
-            if (ttsPlaying || turnBusy || awaitingDrain) {
-              bargeIn();
-              pendingFinal = text;
-              if (!runTurnActive) {
-                const next = pendingFinal;
-                pendingFinal = null;
-                if (next) {
-                  startTurn(next);
-                }
-              }
-              return;
-            }
-            startTurn(text);
-          };
-          const onPartial = (partial: string): void => sendJson(ws, { type: "partial", text: partial });
-          const useCloudAsr = hasDashscopeVoiceKey(voice, snap);
-          asrKind = useCloudAsr ? "fun-asr" : "whisper";
-          if (useCloudAsr) {
-            const ds = resolveDashscopeCreds(voice, snap);
-            asr = new FunAsrClient(
-              ds.apiKey,
-              ds.baseUrl,
-              onPartial,
-              onFinal,
-              voice.hotwords,
-              voice.hotwordVocabularyId,
-              (usage) => {
-                deps.getLlm().noteUsage("asr", usage, sessionId, "fun-asr-realtime");
-              }
-            );
-            await asr.start();
-            sendJson(ws, { type: "status", phase: "listening", asr: "fun-asr" });
-          } else {
+          if (voice.asrBackend === "whisper") {
+            asrKind = "whisper";
             asr = new WhisperAsrClient(voice, onPartial, onFinal);
             await asr.start();
-            sendJson(ws, { type: "status", phase: "listening", asr: "whisper" });
+            sendJson(ws, { type: "status", phase: "listening", asr: "whisper", epoch });
+          } else if (hasDashscopeVoiceKey(voice, snap)) {
+            await openFunAsr(voice, snap);
+            sendJson(ws, { type: "status", phase: "listening", asr: "fun-asr", epoch });
+          } else {
+            sendJson(ws, { type: "error", message: "请填写百炼语音 Key，或在设置中改用本机 Whisper" });
+            ws.close();
+            return;
           }
           bumpIdle();
           logVoice({ phase: "start", ms: Date.now() - startedAt });

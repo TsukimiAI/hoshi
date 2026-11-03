@@ -187,7 +187,7 @@ export const EVAL_CASES: EvalCase[] = [
     assistant: "记下了。",
     existing: [TEA],
     expectGate: true,
-    ops: [{ action: "upsert", kind: "preference", topic: "", text: "老师现在不喝红茶了" }],
+    ops: [{ action: "upsert", kind: "preference", topic: "", text: "老师现在不喝红茶了", id: "tea" }],
     expectWrites: [{ type: "update", id: "tea", topic: "drink" }],
     live: { kind: "update", keywords: ["红茶"] }
   },
@@ -205,7 +205,7 @@ export const EVAL_CASES: EvalCase[] = [
       }
     ],
     expectGate: true,
-    ops: [{ action: "upsert", kind: "identity", topic: "name", text: "老师希望被叫做韩老师" }],
+    ops: [{ action: "upsert", kind: "identity", topic: "name", text: "老师希望被叫做韩老师", id: "name" }],
     expectWrites: [{ type: "update", id: "name", topic: "name" }],
     live: { kind: "update", keywords: ["韩"] }
   },
@@ -223,7 +223,7 @@ export const EVAL_CASES: EvalCase[] = [
       }
     ],
     expectGate: true,
-    ops: [{ action: "upsert", kind: "preference", topic: "drink", text: "老师现在喜欢喝红茶" }],
+    ops: [{ action: "upsert", kind: "preference", topic: "drink", text: "老师现在喜欢喝红茶", id: "coffee" }],
     expectWrites: [{ type: "update", id: "coffee", topic: "drink" }],
     live: { kind: "update", keywords: ["红茶"] }
   },
@@ -256,7 +256,7 @@ export const EVAL_CASES: EvalCase[] = [
     assistant: "好。",
     existing: [TEA],
     expectGate: true,
-    ops: [{ action: "retract", kind: "preference", topic: "drink", text: "老师平时喜欢喝红茶" }],
+    ops: [{ action: "retract", kind: "preference", topic: "drink", text: "老师平时喜欢喝红茶", id: "tea" }],
     expectWrites: [{ type: "supersede", id: "tea" }],
     live: { kind: "skip" }
   },

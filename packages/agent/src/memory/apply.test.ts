@@ -33,16 +33,25 @@ describe("planMemoryWrites", () => {
     ).toEqual([{ type: "supersede", id: "a" }]);
   });
 
+  it("短句不吞更长的偏好", () => {
+    expect(
+      planMemoryWrites(
+        [{ action: "upsert", kind: "preference", topic: "", text: "老师喜欢红茶" }],
+        [mem({ id: "a", kind: "preference", text: "老师平时喜欢喝红茶，而且只喝正山小种" })]
+      )
+    ).toEqual([{ type: "insert", text: "老师喜欢红茶", kind: "preference", topic: "drink" }]);
+  });
+
   it("同 kind 互含则就地更新", () => {
     expect(
       planMemoryWrites(
         [{ action: "upsert", kind: "preference", topic: "", text: "老师现在改喝绿茶了" }],
         [mem({ id: "a", kind: "preference", text: "老师现在改喝绿茶" })]
       )
-      ).toEqual([{ type: "update", id: "a", text: "老师现在改喝绿茶了", topic: "drink" }]);
+    ).toEqual([{ type: "update", id: "a", text: "老师现在改喝绿茶了", topic: "drink" }]);
   });
 
-  it("无重叠则插入", () => {
+  it("无重叠则插入，空 topic 才推断", () => {
     expect(
       planMemoryWrites(
         [{ action: "upsert", kind: "identity", topic: "", text: "老师希望被叫做小韩" }],
@@ -51,34 +60,59 @@ describe("planMemoryWrites", () => {
     ).toEqual([{ type: "insert", text: "老师希望被叫做小韩", kind: "identity", topic: "name" }]);
   });
 
-  it("同 kind 同 topic 改口只更新", () => {
+  it("点名 id 才改口，同 topic 可并存", () => {
+    expect(
+      planMemoryWrites(
+        [{ action: "upsert", kind: "preference", topic: "drink", text: "老师现在不喝红茶了", id: "a" }],
+        [mem({ id: "a", kind: "preference", topic: "drink", text: "老师平时喜欢喝红茶" })]
+      )
+    ).toEqual([{ type: "update", id: "a", text: "老师现在不喝红茶了", topic: "drink" }]);
+    expect(
+      planMemoryWrites(
+        [{ action: "upsert", kind: "preference", topic: "drink", text: "老师现在喜欢喝红茶" }],
+        [mem({ id: "a", kind: "preference", topic: "drink", text: "老师平时不喝咖啡" })]
+      )
+    ).toEqual([{ type: "insert", text: "老师现在喜欢喝红茶", kind: "preference", topic: "drink" }]);
     expect(
       planMemoryWrites(
         [{ action: "upsert", kind: "preference", topic: "drink", text: "老师现在不喝红茶了" }],
         [mem({ id: "a", kind: "preference", topic: "drink", text: "老师平时喜欢喝红茶" })]
       )
     ).toEqual([{ type: "update", id: "a", text: "老师现在不喝红茶了", topic: "drink" }]);
-  });
-
-  it("空 topic 的 upsert 不覆盖已有 topic", () => {
     expect(
       planMemoryWrites(
-        [{ action: "upsert", kind: "preference", topic: "", text: "老师平时喜欢喝红茶啊" }],
+        [{ action: "upsert", kind: "preference", topic: "drink", text: "老师现在改喝绿茶了" }],
         [mem({ id: "a", kind: "preference", topic: "drink", text: "老师平时喜欢喝红茶" })]
       )
-    ).toEqual([{ type: "update", id: "a", text: "老师平时喜欢喝红茶啊", topic: "drink" }]);
+    ).toEqual([{ type: "insert", text: "老师现在改喝绿茶了", kind: "preference", topic: "drink" }]);
+    expect(
+      planMemoryWrites(
+        [{ action: "upsert", kind: "habit", topic: "schedule", text: "老师周末经常休息" }],
+        [mem({ id: "a", kind: "habit", topic: "schedule", text: "老师周末经常加班写代码" })]
+      )
+    ).toEqual([{ type: "insert", text: "老师周末经常休息", kind: "habit", topic: "schedule" }]);
   });
 
-  it("正文能推断时覆盖模型乱 topic", () => {
+  it("近重复向量覆盖，不点名 id", () => {
+    expect(
+      planMemoryWrites(
+        [{ action: "upsert", kind: "preference", topic: "drink", text: "老师现在改喝绿茶了" }],
+        [mem({ id: "a", kind: "preference", topic: "drink", text: "老师平时喜欢喝绿茶" })],
+        new Map([["老师现在改喝绿茶了", [{ id: "a", score: 0.92 }]]])
+      )
+    ).toEqual([{ type: "update", id: "a", text: "老师现在改喝绿茶了", topic: "drink" }]);
+  });
+
+  it("模型给的 topic 不被词表覆盖", () => {
     expect(
       planMemoryWrites(
         [{ action: "upsert", kind: "identity", topic: "student", text: "老师目前是研究生。" }],
         []
       )
-    ).toEqual([{ type: "insert", text: "老师目前是研究生。", kind: "identity", topic: "job" }]);
+    ).toEqual([{ type: "insert", text: "老师目前是研究生。", kind: "identity", topic: "student" }]);
     expect(
       planMemoryWrites(
-        [{ action: "upsert", kind: "habit", topic: "coding", text: "老师习惯晚上写代码" }],
+        [{ action: "upsert", kind: "habit", topic: "", text: "老师习惯晚上写代码" }],
         []
       )
     ).toEqual([{ type: "insert", text: "老师习惯晚上写代码", kind: "habit", topic: "schedule" }]);

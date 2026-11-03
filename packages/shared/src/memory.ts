@@ -38,3 +38,7 @@ export interface MemoryListResponse {
 export function isMemoryKind(value: unknown): value is MemoryKind {
   return typeof value === "string" && (MEMORY_KINDS as string[]).includes(value);
 }
+
+export function memoryAckBadge(ackedAt: string | null | undefined): string {
+  return ackedAt ? "" : "未确认";
+}

@@ -355,6 +355,37 @@ const PTT_SAMPLE_RATE = 16000;
 const PTT_MAX_SECONDS = 18;
 const PTT_MIN_SECONDS = 0.4;
 const PTT_SILENCE_RMS = 0.008;
+const LIVE_BARGE_RMS = 0.06;
+const LIVE_BARGE_HOLD_MS = 500;
+const LIVE_BARGE_TAIL_MS = 250;
+
+type LiveBargeGate = { loudMs: number };
+
+function createLiveBargeGate(): LiveBargeGate {
+  return { loudMs: 0 };
+}
+
+function tickLiveBargeGate(
+  gate: LiveBargeGate,
+  rms: number,
+  frameMs: number,
+  holding: boolean
+): { send: boolean; barge: boolean } {
+  if (!holding) {
+    gate.loudMs = 0;
+    return { send: true, barge: false };
+  }
+  if (rms >= LIVE_BARGE_RMS) {
+    gate.loudMs += frameMs;
+    if (gate.loudMs >= LIVE_BARGE_HOLD_MS) {
+      gate.loudMs = 0;
+      return { send: false, barge: true };
+    }
+    return { send: false, barge: false };
+  }
+  gate.loudMs = 0;
+  return { send: false, barge: false };
+}
 
 function resampleLinear(input: Float32Array, fromRate: number, toRate: number): Float32Array {
   if (fromRate === toRate || input.length === 0) {

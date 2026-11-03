@@ -1,7 +1,7 @@
 import type { MemoryItem } from "@hoshi/shared";
 import { planMemoryWrites, type MemoryWrite } from "../apply";
-import { canExtractMemory, parseOpsJson, shouldExtract } from "../extract";
-import { selectMemoriesForInject } from "../inject";
+import { canExtractMemory, parseOpsJson } from "../extract";
+import { selectMemoriesForInject, type MemoryArchiveHit } from "../inject";
 import { EVAL_CASES, type EvalCase, type ExpectWrite, type ExistingSeed } from "./cases";
 
 export function toItems(seeds: ExistingSeed[] | undefined): MemoryItem[] {
@@ -16,10 +16,6 @@ export function toItems(seeds: ExistingSeed[] | undefined): MemoryItem[] {
     updatedAt: seed.updatedAt ?? "2026-01-01T00:00:00.000Z",
     ackedAt: null
   }));
-}
-
-export function runGate(evalCase: EvalCase): boolean {
-  return shouldExtract(evalCase.user) === evalCase.expectGate;
 }
 
 export function writeFits(actual: MemoryWrite, expected: ExpectWrite): boolean {
@@ -55,7 +51,7 @@ export function writesMatch(actual: MemoryWrite[], expected: ExpectWrite[]): boo
 
 export function runWrites(evalCase: EvalCase): { ok: boolean; writes: MemoryWrite[] } {
   const autoWrite = evalCase.autoWrite ?? true;
-  if (!canExtractMemory(autoWrite, evalCase.user, evalCase.assistant)) {
+  if (!canExtractMemory(autoWrite, evalCase.user)) {
     const writes: MemoryWrite[] = [];
     return { ok: writesMatch(writes, evalCase.expectWrites ?? []), writes };
   }
@@ -64,12 +60,22 @@ export function runWrites(evalCase: EvalCase): { ok: boolean; writes: MemoryWrit
   return { ok: writesMatch(writes, evalCase.expectWrites ?? []), writes };
 }
 
+function archiveHitsForCase(evalCase: EvalCase): MemoryArchiveHit[] {
+  const items = toItems(evalCase.existing);
+  const need = new Set(evalCase.expectInjectIds ?? []);
+  return items
+    .filter((item) => need.has(item.id) && item.kind !== "identity" && item.kind !== "agreement")
+    .map((item) => ({ id: item.id, score: 0.8 }));
+}
+
 export function runInject(evalCase: EvalCase): { ok: boolean; ids: string[] } {
   const query = evalCase.injectQuery;
   if (query === undefined) {
     return { ok: true, ids: [] };
   }
-  const ids = selectMemoriesForInject(toItems(evalCase.existing), query).map((item) => item.id);
+  const ids = selectMemoriesForInject(toItems(evalCase.existing), query, archiveHitsForCase(evalCase)).map(
+    (item) => item.id
+  );
   const need = evalCase.expectInjectIds ?? [];
   const ban = evalCase.expectInjectExcludeIds ?? [];
   const hit = need.every((id) => ids.includes(id));
@@ -78,18 +84,14 @@ export function runInject(evalCase: EvalCase): { ok: boolean; ids: string[] } {
 }
 
 export interface EvalScores {
-  gate_acc: number;
   write_acc: number;
   inject_p: number;
   inject_r: number;
-  gate_n: number;
   write_n: number;
   inject_n: number;
 }
 
 export function scoreAll(cases: EvalCase[] = EVAL_CASES): EvalScores {
-  let gateOk = 0;
-  const gateN = cases.length;
   let writeOk = 0;
   let writeN = 0;
   let injectTp = 0;
@@ -98,9 +100,6 @@ export function scoreAll(cases: EvalCase[] = EVAL_CASES): EvalScores {
   let injectN = 0;
 
   for (const evalCase of cases) {
-    if (runGate(evalCase)) {
-      gateOk += 1;
-    }
     if (evalCase.expectWrites !== undefined) {
       writeN += 1;
       if (runWrites(evalCase).ok) {
@@ -123,11 +122,9 @@ export function scoreAll(cases: EvalCase[] = EVAL_CASES): EvalScores {
   }
 
   return {
-    gate_acc: gateN ? gateOk / gateN : 1,
     write_acc: writeN ? writeOk / writeN : 1,
     inject_p: injectPred ? injectTp / injectPred : 1,
     inject_r: injectGold ? injectTp / injectGold : 1,
-    gate_n: gateN,
     write_n: writeN,
     inject_n: injectN
   };

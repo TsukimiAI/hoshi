@@ -7,6 +7,7 @@ import {
   vectorAvailable
 } from "./schema";
 import { extractKnowledgeNoteName } from "../retrieval/plan";
+import { glossaryExpansions, queryTopicGrams } from "./relevance";
 import type {
   KnowledgeChunkItem,
   KnowledgeCollection,
@@ -112,6 +113,12 @@ function keywordSearchTerms(query: string): string[] {
   add(query.trim());
   for (const token of query.match(/[A-Za-z0-9]{2,}/g) ?? []) {
     add(token);
+  }
+  for (const gram of queryTopicGrams(query)) {
+    add(gram);
+  }
+  for (const alias of glossaryExpansions(query)) {
+    add(alias);
   }
   return [...terms];
 }
@@ -618,17 +625,26 @@ export class KnowledgeRepo {
     return rows.map((row) => row.text);
   }
 
-  async listReindexableChunks(): Promise<
+  async listReindexableChunks(documentId?: string): Promise<
     Array<{ chunkId: string; collectionId: string; title: string; text: string; headingPath: string[] }>
   > {
-    const rows = this.db
-      .prepare(
-        `SELECT c.id AS chunk_id, d.collection_id, d.title, c.text, c.meta
-         FROM kb_chunks c
-         JOIN kb_documents d ON d.id = c.document_id
-         WHERE d.status = 'ready'`
-      )
-      .all() as unknown as Record<string, unknown>[];
+    const rows = documentId
+      ? (this.db
+          .prepare(
+            `SELECT c.id AS chunk_id, d.collection_id, d.title, c.text, c.meta
+             FROM kb_chunks c
+             JOIN kb_documents d ON d.id = c.document_id
+             WHERE d.status = 'ready' AND d.id = ?`
+          )
+          .all(documentId) as unknown as Record<string, unknown>[])
+      : (this.db
+          .prepare(
+            `SELECT c.id AS chunk_id, d.collection_id, d.title, c.text, c.meta
+             FROM kb_chunks c
+             JOIN kb_documents d ON d.id = c.document_id
+             WHERE d.status = 'ready'`
+          )
+          .all() as unknown as Record<string, unknown>[]);
     return rows.map((row) => ({
       chunkId: String(row.chunk_id),
       collectionId: String(row.collection_id),
@@ -652,6 +668,25 @@ export class KnowledgeRepo {
       this.db.prepare(`DELETE FROM kb_vec`).run();
       for (const entry of entries) {
         stmt.run(entry.chunkId, entry.collectionId, new Float32Array(entry.embedding));
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  async upsertVectors(entries: Array<{ chunkId: string; collectionId: string; embedding: number[] }>): Promise<void> {
+    if (entries.length === 0) {
+      return;
+    }
+    const del = this.db.prepare(`DELETE FROM kb_vec WHERE chunk_id = ?`);
+    const ins = this.db.prepare(`INSERT INTO kb_vec (chunk_id, collection_id, embedding) VALUES (?, ?, ?)`);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const entry of entries) {
+        del.run(entry.chunkId);
+        ins.run(entry.chunkId, entry.collectionId, new Float32Array(entry.embedding));
       }
       this.db.exec("COMMIT");
     } catch (error) {

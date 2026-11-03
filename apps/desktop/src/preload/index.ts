@@ -5,6 +5,14 @@ import type {
   CanvasSnapshotListResponse,
   Emotion,
   HoshiSettings,
+  KnowledgeChunkItem,
+  KnowledgeCollection,
+  KnowledgeCollectionsResponse,
+  KnowledgeDocument,
+  KnowledgeDocumentsResponse,
+  KnowledgeJob,
+  KnowledgeSearchHit,
+  KnowledgeSearchTraceResponse,
   MemoryItem,
   MemoryListResponse,
   PresentationSettings,
@@ -12,6 +20,7 @@ import type {
   SessionKind,
   SessionMessagesResponse,
   PluginListResponse,
+  SearchTrace,
   UsageSummaryResponse
 } from "@hoshi/shared";
 
@@ -387,10 +396,7 @@ const hoshiApi = {
     if (!response.ok) {
       throw new Error(`list kb collections failed: ${response.status}`);
     }
-    return (await response.json()) as {
-      collections: Array<{ id: string; name: string; description: string; enabled: boolean; documentCount: number; createdAt: string; updatedAt: string }>;
-      capabilities: { vectorAvailable: boolean; embeddingModel: string; embeddingDim: number; pendingJobs: number };
-    };
+    return (await response.json()) as KnowledgeCollectionsResponse;
   },
   async createKbCollection(name: string, description?: string) {
     const config = await hoshiApi.getConfig();
@@ -402,7 +408,7 @@ const hoshiApi = {
     if (!response.ok) {
       throw new Error(`create kb collection failed: ${response.status}`);
     }
-    return (await response.json()) as { id: string; name: string };
+    return (await response.json()) as KnowledgeCollection;
   },
   async deleteKbCollection(id: string) {
     const config = await hoshiApi.getConfig();
@@ -425,7 +431,7 @@ const hoshiApi = {
     if (!response.ok) {
       throw new Error(`patch kb collection failed: ${response.status}`);
     }
-    return (await response.json()) as { id: string; name: string; enabled: boolean };
+    return (await response.json()) as KnowledgeCollection;
   },
   async listKbDocuments(collectionId: string) {
     const config = await hoshiApi.getConfig();
@@ -435,7 +441,7 @@ const hoshiApi = {
     if (!response.ok) {
       throw new Error(`list kb documents failed: ${response.status}`);
     }
-    return (await response.json()) as { documents: Array<{ id: string; collectionId: string; title: string; sourceName: string; mime: string; sizeBytes: number; status: string; error: string; chunkCount: number; createdAt: string; updatedAt: string }> };
+    return (await response.json()) as KnowledgeDocumentsResponse;
   },
   async importKbDocument(collectionId: string, input: { title: string; text: string; sourceName?: string }) {
     const config = await hoshiApi.getConfig();
@@ -448,7 +454,7 @@ const hoshiApi = {
       throw new Error(`import kb document failed: ${response.status}`);
     }
     return (await response.json()) as {
-      doc: { id: string; status: string };
+      doc: KnowledgeDocument;
       action: "created" | "updated" | "skipped";
     };
   },
@@ -461,7 +467,7 @@ const hoshiApi = {
     if (!response.ok) {
       throw new Error(`retry kb document failed: ${response.status}`);
     }
-    return (await response.json()) as { id: string; status: string };
+    return (await response.json()) as KnowledgeDocument;
   },
   async deleteKbDocument(id: string) {
     const config = await hoshiApi.getConfig();
@@ -496,18 +502,7 @@ const hoshiApi = {
     if (!response.ok) {
       throw new Error(`kb search failed: ${response.status}`);
     }
-    return (await response.json()) as {
-      hits: Array<{ chunkId: string; docId: string; documentTitle: string; collectionId: string; collectionName: string; text: string; score: number }>;
-      trace?: {
-        query: string;
-        vectorHits: Array<{ chunkId: string; score: number; text: string }>;
-        keywordHits: Array<{ chunkId: string; score: number; text: string }>;
-        fusedHits: Array<{ chunkId: string; score: number; text: string }>;
-        finalHits: Array<{ chunkId: string; score: number; text: string }>;
-        reranked: boolean;
-        latencyMs: { embed: number; vector: number; keyword: number; fuse: number; rerank: number; total: number };
-      };
-    };
+    return (await response.json()) as KnowledgeSearchTraceResponse | { hits: KnowledgeSearchHit[]; trace?: SearchTrace };
   },
   async listKbChunks(documentId: string) {
     const config = await hoshiApi.getConfig();
@@ -517,7 +512,7 @@ const hoshiApi = {
     if (!response.ok) {
       throw new Error(`list kb chunks failed: ${response.status}`);
     }
-    return (await response.json()) as { chunks: Array<{ id: string; documentId: string; seq: number; text: string }>; total: number };
+    return (await response.json()) as { chunks: KnowledgeChunkItem[]; total: number };
   },
   async updateKbChunk(chunkId: string, text: string) {
     const config = await hoshiApi.getConfig();
@@ -550,10 +545,7 @@ const hoshiApi = {
     if (!response.ok) {
       throw new Error(`list kb jobs failed: ${response.status}`);
     }
-    return (await response.json()) as {
-      jobs: Array<{ id: string; documentId: string; kind: string; status: string; attempt: number; error: string; createdAt: string; updatedAt: string }>;
-      pending: number;
-    };
+    return (await response.json()) as { jobs: KnowledgeJob[]; pending: number };
   },
   async rememberKbChunk(chunkId: string) {
     const config = await hoshiApi.getConfig();
@@ -933,3 +925,5 @@ const hoshiApi = {
 };
 
 contextBridge.exposeInMainWorld("hoshi", hoshiApi);
+
+export type HoshiApi = typeof hoshiApi;

@@ -1,9 +1,10 @@
 import type { MemoryKind } from "@hoshi/shared";
 import type { LlmMessage } from "../llm/openai";
 
-export const MEMORY_FACT_MIN = 6;
+export const MEMORY_FACT_MIN = 4;
 export const MEMORY_FACT_MAX = 80;
 export const MEMORY_EXTRACT_MAX = 3;
+export const MEMORY_EXTRACT_NEIGHBORS = 8;
 
 export type MemoryOpAction = "upsert" | "retract";
 
@@ -12,36 +13,22 @@ export interface MemoryOp {
   kind: MemoryKind;
   topic: string;
   text: string;
+  id?: string;
 }
 
-export const MEMORY_EXTRACT_PROMPT = `你从本轮对话中为「老师」维护长期记忆。只输出 JSON：{"ops":[{"action":"upsert","kind":"preference","topic":"drink","text":"..."}]}
+export const MEMORY_EXTRACT_PROMPT = `你从老师这句话中为「老师」维护长期记忆。只输出 JSON：{"ops":[{"action":"upsert","kind":"preference","topic":"drink","text":"...","id":"可选"}]}
 规则：
 - ops 0到3条。action 只能是 upsert 或 retract。
 - kind 只能是 identity、preference、habit、agreement、other。
-- topic 用稳定短词（name/drink/job/schedule 等），同一件事必须同一 topic；改口靠同一 topic 覆盖，不必再 retract。
-- 每条 text 一句中文，6到80字，写成「老师…」。
-- 「我是研究生」「不喝咖啡」这类身份和否定偏好必须 upsert，不要因为星奈已答应就输出空。
+- topic 用稳定短词（name/drink/job/schedule 等）。
+- 每条 text 一句中文，4到80字，写成「老师…」。
+- 已有记忆带 id。改口、覆盖同一件事时必须带上那条 id。对不上就不要填 id，让系统新增。
+- 「我是研究生」「不喝咖啡」「我叫韩」这类身份、否定偏好和名字必须 upsert。名字写成「老师希望被叫做韩」。
 - 只处理自我介绍、偏好、习惯、明确约定、身份称呼。
-- 不抽天气播报/联播/代码题、情绪、对星奈的夸奖、猜测。职业含「新闻」可以记。
-- 已有记忆里意思相同且未改口的不要再 upsert。
+- 寒暄、天气播报、新闻联播、代码题、报错、情绪、对星奈的夸奖、猜测：输出 {"ops":[]}。
+- 职业含「新闻」可以记。已有记忆意思相同且未改口的不要再 upsert。
 - 不要密码、验证码、密钥、证件号、银行卡、精确住址门牌、病历、气温预报。
 - 没有值得记的就 {"ops":[]}`;
-
-const DENY = ["天气", "新闻", "报错", "traceback", "帮我写", "写代码", "编译"];
-const ALLOW = [
-  "记住",
-  "别忘",
-  "以后",
-  "我是",
-  "叫我",
-  "喜欢",
-  "习惯",
-  "不要",
-  "我叫",
-  "我在",
-  "从事",
-  "工作是"
-];
 
 const REJECT = [
   "密码",
@@ -59,19 +46,38 @@ const REJECT = [
 
 const WEATHER_HINT = ["今天", "明天", "气温", "预报", "怎么样"];
 const ADDRESS_HINT = ["区", "路", "号", "小区"];
+const FORCE_EXTRACT = /我是|我叫|喜欢|习惯|记住|以后|不要|别忘/;
+const SKIP_WEATHER = /天气|气温|预报/;
+const SKIP_CODE = /代码|编译|函数|traceback|报错|写一段/i;
+const SKIP_NEWS = /新闻联播|联播/;
+const SKIP_GREET = /^(你好|您好|在吗|早上好|晚上好|晚安|嗨|哈喽|hi+|hello)[啊呀呢吧。！!？?\s]*$/i;
+const SKIP_TONE = /^(嗯+|啊+|哦+|哈+|好的?|嗯好的|好)[啊呀呢吧。！!？?\s]*$/;
+export const MEMORY_DUP_LENGTH_RATIO = 0.8;
+
+function isSkipTopic(text: string): boolean {
+  return SKIP_GREET.test(text) || SKIP_TONE.test(text) || SKIP_NEWS.test(text) || SKIP_WEATHER.test(text) || SKIP_CODE.test(text);
+}
+
+function hasSelfPronoun(text: string): boolean {
+  return text.replace(/我们|帮我|给我|让我/g, "").includes("我");
+}
+
+export function isChitchatSkip(userText: string): boolean {
+  return !shouldExtract(userText);
+}
 
 export function shouldExtract(userText: string): boolean {
-  const user = userText.trim();
-  if (!user) {
+  const text = userText.trim();
+  if (!text) {
     return false;
   }
-  if (ALLOW.some((item) => user.includes(item))) {
+  if (FORCE_EXTRACT.test(text)) {
     return true;
   }
-  if (DENY.some((item) => user.toLowerCase().includes(item))) {
+  if (isSkipTopic(text)) {
     return false;
   }
-  return false;
+  return hasSelfPronoun(text);
 }
 
 export function normalizeTopic(raw: unknown): string {
@@ -85,16 +91,45 @@ export function normalizeTopic(raw: unknown): string {
   return topic;
 }
 
-export function canExtractMemory(
-  autoWrite: boolean,
-  userText: string,
-  assistantText: string
-): boolean {
-  return autoWrite && shouldExtract(userText) && Boolean(assistantText.trim());
+export function canExtractMemory(autoWrite: boolean, userText: string): boolean {
+  return autoWrite && shouldExtract(userText);
 }
 
 export function normalizeMemoryText(text: string): string {
   return text.toLowerCase().replace(/\s+/g, "");
+}
+
+const MEMORY_FACT_STOP = ["老师", "希望", "被", "叫做", "平时", "喜欢", "喝", "的", "了", "是", "在", "经常", "请", "记住"];
+
+export function memoryFactKey(text: string): string {
+  let key = normalizeMemoryText(text);
+  for (const stop of MEMORY_FACT_STOP) {
+    key = key.split(stop).join("");
+  }
+  return key;
+}
+
+export function sharesFactEntity(a: string, b: string, allowUnigram = false): boolean {
+  const ka = memoryFactKey(a);
+  const kb = memoryFactKey(b);
+  if (!ka || !kb) {
+    return false;
+  }
+  const [short, long] = ka.length <= kb.length ? [ka, kb] : [kb, ka];
+  if (allowUnigram && short.length >= 1 && long.includes(short)) {
+    return true;
+  }
+  if (short.length < 2) {
+    return false;
+  }
+  for (let n = short.length; n >= 2; n -= 1) {
+    for (let i = 0; i + n <= short.length; i += 1) {
+      if (long.includes(short.slice(i, i + n))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 export function isDuplicateFact(candidate: string, existing: string[]): boolean {
@@ -107,7 +142,13 @@ export function isDuplicateFact(candidate: string, existing: string[]): boolean 
     if (!b) {
       return false;
     }
-    return a === b || a.includes(b) || b.includes(a);
+    if (a === b) {
+      return true;
+    }
+    if (!a.includes(b) && !b.includes(a)) {
+      return false;
+    }
+    return Math.min(a.length, b.length) / Math.max(a.length, b.length) >= MEMORY_DUP_LENGTH_RATIO;
   });
 }
 
@@ -173,6 +214,17 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   }
 }
 
+function normalizeOpId(raw: unknown): string | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const id = raw.trim();
+  if (!id || id.length > 64) {
+    return undefined;
+  }
+  return id;
+}
+
 export function parseOpsJson(raw: string): MemoryOp[] {
   const parsed = parseJsonObject(raw);
   if (!parsed) {
@@ -208,7 +260,12 @@ export function parseOpsJson(raw: string): MemoryOp[] {
     if (!text) {
       continue;
     }
-    ops.push({ action, kind, topic: normalizeTopic(rec.topic), text });
+    const op: MemoryOp = { action, kind, topic: normalizeTopic(rec.topic), text };
+    const id = normalizeOpId(rec.id);
+    if (id) {
+      op.id = id;
+    }
+    ops.push(op);
   }
   return ops;
 }
@@ -232,26 +289,26 @@ export function filterFacts(rawFacts: string[], existing: string[]): string[] {
 
 export function buildExtractUserContent(
   userText: string,
-  assistantText: string,
-  existing: Array<{ text: string; kind?: string; topic?: string }>
+  existing: Array<{ id?: string; text: string; kind?: string; topic?: string }>
 ): string {
   const listed = existing
-    .slice(0, 12)
+    .slice(0, MEMORY_EXTRACT_NEIGHBORS)
     .map((item, index) => {
       const tag = [item.kind, item.topic].filter(Boolean).join("/");
-      return tag ? `${index + 1}. [${tag}] ${item.text}` : `${index + 1}. ${item.text}`;
+      const id = item.id ? ` id=${item.id}` : "";
+      const head = tag ? `[${tag}${id}]` : id ? `[${id.trim()}]` : "";
+      return head ? `${index + 1}. ${head} ${item.text}` : `${index + 1}. ${item.text}`;
     })
     .join("\n");
-  return `已有记忆：\n${listed || "（无）"}\n\n老师：${userText.trim()}\n星奈：${assistantText.trim()}`;
+  return `已有记忆：\n${listed || "（无）"}\n\n老师：${userText.trim()}`;
 }
 
 export async function extractLongTermOps(input: {
   userText: string;
-  assistantText: string;
-  existing: Array<{ text: string; kind?: string; topic?: string }>;
+  existing: Array<{ id?: string; text: string; kind?: string; topic?: string }>;
   completeChat: (messages: LlmMessage[]) => Promise<string>;
 }): Promise<MemoryOp[]> {
-  if (!shouldExtract(input.userText) || !input.assistantText.trim()) {
+  if (!input.userText.trim()) {
     return [];
   }
   let raw = "";
@@ -260,7 +317,7 @@ export async function extractLongTermOps(input: {
       { role: "system", content: MEMORY_EXTRACT_PROMPT },
       {
         role: "user",
-        content: buildExtractUserContent(input.userText, input.assistantText, input.existing)
+        content: buildExtractUserContent(input.userText, input.existing)
       }
     ]);
   } catch {

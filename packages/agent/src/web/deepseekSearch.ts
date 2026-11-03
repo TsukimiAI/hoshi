@@ -90,7 +90,7 @@ export async function searchDeepSeekOfficial(
     body: JSON.stringify({
       model: DEEPSEEK_SEARCH_MODEL,
       max_tokens: 1024,
-      messages: [{ role: "user", content: `Search the web for: ${query}` }],
+      messages: [{ role: "user", content: `请用网页检索「${query}」。天气类问题必须列出城市、日期、最高温和最低温，有数字就写数字。不要只返回网站导航标题。` }],
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }]
     }),
     signal

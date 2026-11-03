@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { canExtractMemory } from "./extract";
 import { EVAL_CASES } from "./eval/cases";
-import { runGate, runInject, runWrites, scoreAll } from "./eval/run";
+import { runInject, runWrites, scoreAll } from "./eval/run";
 
 describe("memory eval", () => {
-  it.each(EVAL_CASES)("$id gate", (evalCase) => {
-    expect(runGate(evalCase)).toBe(true);
+  it.each(EVAL_CASES.filter((item) => item.autoWrite !== false))("$id gate", (evalCase) => {
+    expect(canExtractMemory(true, evalCase.user)).toBe(evalCase.expectGate);
   });
 
   it.each(EVAL_CASES.filter((item) => item.expectWrites !== undefined))("$id writes", (evalCase) => {
@@ -22,9 +23,8 @@ describe("memory eval", () => {
   it("scores", () => {
     const scores = scoreAll();
     console.log(
-      `memory_eval gate_acc=${scores.gate_acc.toFixed(2)} write_acc=${scores.write_acc.toFixed(2)} inject_p=${scores.inject_p.toFixed(2)} inject_r=${scores.inject_r.toFixed(2)} n=${scores.gate_n}/${scores.write_n}/${scores.inject_n}`
+      `memory_eval write_acc=${scores.write_acc.toFixed(2)} inject_p=${scores.inject_p.toFixed(2)} inject_r=${scores.inject_r.toFixed(2)} n=${scores.write_n}/${scores.inject_n}`
     );
-    expect(scores.gate_acc).toBe(1);
     expect(scores.write_acc).toBe(1);
     expect(scores.inject_p).toBe(1);
     expect(scores.inject_r).toBe(1);

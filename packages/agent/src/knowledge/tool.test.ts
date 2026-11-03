@@ -36,6 +36,24 @@ describe("KnowledgeToolHost", () => {
     expect(result).not.toContain("BSS");
   });
 
+  it("英文页表段对页表问句算命中", async () => {
+    const host = new KnowledgeToolHost({
+      isEnabled: () => true,
+      contextBudgetChars: () => 2400,
+      expandHitContext: async (item: KnowledgeSearchHit) => item.text,
+      search: async () => [
+        hit({
+          documentTitle: "MIT 6.S081",
+          text: "A page table maps virtual addresses to physical frames."
+        })
+      ]
+    } as unknown as KnowledgeService);
+
+    const result = await host.execute("search_knowledge", { query: "操作系统里的页表概念" });
+    expect(result).not.toContain("没有与该问题相关");
+    expect(result).toContain("page table");
+  });
+
   it("列出知识库文件名", async () => {
     const host = new KnowledgeToolHost({
       isEnabled: () => true,

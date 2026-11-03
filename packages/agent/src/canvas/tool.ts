@@ -5,11 +5,10 @@ import type { LlmTool } from "../plugins/types";
 import type { CanvasRepo } from "../storage/canvasRepo";
 import { canonicalizeCanvasImageUrl, lookupPortraitUrl, type PortraitFetcher } from "./portrait";
 import {
+  classifyDeskTurn,
   extractPortraitName,
   extractPortraitNames,
-  looksLikeConceptQuery,
-  looksLikePersonQuery,
-  looksLikeWorkQuery,
+  looksLikeChitchat,
   portraitLookupQuery,
   shouldAttachIllustration
 } from "../retrieval/plan";
@@ -143,11 +142,51 @@ function unescapeBody(raw: string): string {
   return raw.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
 }
 
-const PLACEHOLDER =
-  /待补数据|还缺两样|请把每天|把七天的最高|不想凭印象编数字|把每天的天气现象/;
+const PLACEHOLDER = /待补数据|请老师补|星奈就绪/;
+
+const CAPABILITY_PITCH =
+  /等你(出题|给题目)|随时可以开工|能做的事|说一句主题就行|白板还没|还没内容|直接上板|星奈就绪|星奈在线/;
+
+function looksLikeCapabilityPitch(page: string): boolean {
+  if (CAPABILITY_PITCH.test(page)) {
+    return true;
+  }
+  const menu = [/知识卡/, /markdown|对照/, /图表|柱状|折线/, /人物|概念/].filter((item) => item.test(page));
+  return menu.length >= 3;
+}
+
+const HINT_FILLER =
+  /现有产品|各种|怎么样|怎么|如何|为什么|是什么|什么|请问|帮我|我想|了解一下|介绍一下|分析一下|可以吗|现在|目前|设计/g;
 
 export function looksLikePlaceholderCanvas(title: string, body: string): boolean {
   return PLACEHOLDER.test(`${title}\n${body}`);
+}
+
+export function canvasMissesQuestion(hint: string, texts: string[]): boolean {
+  const trimmed = hint.trim();
+  if (!trimmed || looksLikeChitchat(trimmed) || /你能做|你会什么|能做什么|怎么用你/.test(trimmed)) {
+    return false;
+  }
+  const page = texts.join("\n");
+  if (!looksLikeCapabilityPitch(page)) {
+    return false;
+  }
+  const residual = trimmed.replace(HINT_FILLER, "").replace(/[\s，。！？、；：的了吗呢啊是在中等和与或]/g, "");
+  const needles: string[] = [];
+  for (let size = 2; size <= 4; size += 1) {
+    for (let i = 0; i + size <= residual.length && needles.length < 24; i += 1) {
+      needles.push(residual.slice(i, i + size));
+    }
+  }
+  if (needles.length === 0) {
+    return true;
+  }
+  return !needles.some((needle) => page.includes(needle));
+}
+
+function specPlainText(spec: { title: string; payload: CanvasPayload }): string {
+  const payload = spec.payload as { body?: string; insight?: string; caption?: string };
+  return [spec.title, payload.body, payload.insight, payload.caption].filter(Boolean).join("\n");
 }
 
 function asString(value: unknown): string {
@@ -195,8 +234,11 @@ function buildPayload(kind: CanvasKind, args: Record<string, unknown>): CanvasPa
       })
       .filter((row) => row.values.length > 0)
       .slice(0, 6);
-    if (labels.length === 0 || series.length === 0) {
-      return "图表缺少 labels 或 series";
+    if (labels.length === 0) {
+      return "labels 为空";
+    }
+    if (series.length === 0) {
+      return "series 为空";
     }
     const chartType = args.chartType === "pie" || args.chartType === "bar" ? args.chartType : "line";
     return {
@@ -223,8 +265,11 @@ function buildPayload(kind: CanvasKind, args: Record<string, unknown>): CanvasPa
       )
       .filter((row) => row.some((cell) => cell.trim()))
       .slice(0, 80);
-    if (columns.length === 0 || rows.length === 0) {
-      return "表格需要 columns 和至少一行";
+    if (columns.length === 0) {
+      return "columns 为空";
+    }
+    if (rows.length === 0) {
+      return "rows 为空";
     }
     return { columns, rows, caption: asString(args.caption) || undefined };
   }
@@ -271,15 +316,7 @@ function parseItemArgs(
 
 export const CANVAS_USAGE_PROMPT = `你在工作台里和老师对话。一份会话只有一块正在写的活板；右侧动态只是回合时间线，每回合结束会自动把当时的整板存成快照。不要为每个动态另开一块画布，也不要把上一回合的卡片再生成一遍。
 换人物、换主题、只要这一页：canvas_set 只列出本轮要留下的卡片。默认不要带上旧人物卡。老师明确说保留/一起看时才带库存 id。
-单卡改数字：canvas_put，必须带库存 id 或完全相同的标题。活板上已有卡片时禁止 put 一张新主题。
-- web_search 来源里有趋势/对比数字：立刻 kind=chart，填齐 labels、series（需要时 axis=right、errors）、subtitle、xLabel、yLabel、y2Label、unit、insight。禁止再问老师要气温表，禁止「待补数据」卡片。
-- 概念、定义、知识点：必须 kind=card。title 用词条名，kicker 用一句话定位，body 写 3～8 句给人看的说明，tags 2～5 个。禁止只口头解释却不放卡，禁止输出字面 \\n。
-- 人物、角色、演员、影视、图书、漫画等：每人/每部一张 card（title 用人名或作品名，kicker 用身份，body 只写该对象）。系统会按标题查萌百/维基配图。
-- 两人对照、异同、萌点：一次 canvas_set 最好三张——两位各一张 card（禁止两张卡复制同一段口播），再加一张 kind=table 或 markdown 写异同与萌点。不要把整句问话当标题。两张人物卡也可以先交。
-- 对照表：kind=table，填 columns 和至少一行 rows。
-- 长说明：kind=markdown，body 用标题、列表、加粗、代码、链接，不要 HTML。
-- 单独配图：kind=image，url 必须是 http(s)，或标题用准确人名以便配肖像。
-摘录没有数字才口头说明查不到，不要往画布堆模板。时效资料先 web_search，需要全文再 web_fetch。禁止输出 tool_call XML。`;
+单卡改数字：canvas_put，必须带库存 id 或完全相同的标题。活板上已有卡片时禁止 put 一张新主题。`;
 
 const PAGE_REPLACE = /换成|整页|只要这|重新画|清掉旧/;
 const KEEP_OLD_CARDS = /一起|都放|保留旧|加上|同时放/;
@@ -310,7 +347,11 @@ function specsForCurrentTurn<T extends { title: string; kind?: CanvasKind }>(spe
   if (KEEP_OLD_CARDS.test(hint)) {
     return specs;
   }
-  const names = extractPortraitNames(hint, "");
+  const turn = classifyDeskTurn(hint);
+  if (turn.kind !== "person" && turn.kind !== "compare") {
+    return specs;
+  }
+  const names = turn.names.length > 0 ? turn.names : extractPortraitNames(hint, "");
   if (specs.length <= 1) {
     const only = specs[0];
     if (only && names.length >= 2 && isQuestionDumpTitle(only.title)) {
@@ -320,9 +361,6 @@ function specsForCurrentTurn<T extends { title: string; kind?: CanvasKind }>(spe
   }
   const focus = names[0] ?? extractPortraitName(hint, "");
   if (focus.length < 2) {
-    return specs;
-  }
-  if (!looksLikePersonQuery(hint) && !looksLikeConceptQuery(hint) && !looksLikeWorkQuery(hint)) {
     return specs;
   }
   const matched = specs.filter((spec) => {
@@ -337,11 +375,69 @@ function specsForCurrentTurn<T extends { title: string; kind?: CanvasKind }>(spe
   return matched.length > 0 ? matched : [];
 }
 
+function cardMeta(payload: CanvasPayload): { kicker?: string; tags?: string[] } {
+  if (!payload || typeof payload !== "object" || !("kicker" in payload || "tags" in payload)) {
+    return {};
+  }
+  const rec = payload as { kicker?: string; tags?: string[] };
+  return { kicker: rec.kicker, tags: rec.tags };
+}
+
+function rejectsKindForHint(hint: string, spec: { kind: CanvasKind; payload: CanvasPayload }): string | null {
+  const turn = classifyDeskTurn(hint).kind;
+  if (turn === "live") {
+    if (spec.kind !== "chart") {
+      return "时效题只接受 kind=chart；摘录没有数字就不要落卡，禁止让老师补日期。";
+    }
+  }
+  if (spec.kind === "chart" && rejectsChartForHint(hint)) {
+    return "这是概念、人物或作品题，请改用 kind=card 写知识卡，不要 chart。";
+  }
+  const meta = cardMeta(spec.payload);
+  if (rejectsLiveCharacterCard(hint, spec.kind, meta.kicker, meta.tags)) {
+    return "这是天气或时效题，请用 kind=chart 填数字，不要人物卡。";
+  }
+  return null;
+}
+
+function rejectsChartForHint(hint: string): boolean {
+  const kind = classifyDeskTurn(hint).kind;
+  return kind === "person" || kind === "compare" || kind === "concept";
+}
+
+function rejectsLiveCharacterCard(hint: string, kind: CanvasKind, kicker?: string, tags?: string[]): boolean {
+  if (classifyDeskTurn(hint).kind !== "live" || kind !== "card") {
+    return false;
+  }
+  return /人物|角色/.test(`${kicker ?? ""} ${(tags ?? []).join(" ")}`);
+}
+
+type PageSpec = { kind: CanvasKind; title: string; payload: CanvasPayload };
+
+export function validateCanvasPage(specs: PageSpec[], hint: string): string | null {
+  const errors: string[] = [];
+  for (const spec of specs) {
+    const kindError = rejectsKindForHint(hint, spec);
+    if (kindError) {
+      errors.push(`「${spec.title}」${kindError}`);
+    }
+    const bodyText = "body" in spec.payload ? String(spec.payload.body ?? "") : "";
+    if (looksLikePlaceholderCanvas(spec.title, bodyText)) {
+      errors.push(`「${spec.title}」拒绝：缺少实测数字，不要往画布堆待补模板。口头说明即可。`);
+    }
+  }
+  if (canvasMissesQuestion(hint, specs.map((spec) => specPlainText(spec)))) {
+    errors.push("拒绝：这是欢迎语或能力清单，没有回答老师的问题。请用主题词当标题，把结论写进 body。");
+  }
+  return errors.length > 0 ? errors.join("；") : null;
+}
+
 export class CanvasToolHost implements PluginHost {
   private enabled = false;
   private sessionId: string | null = null;
   private turnHint = "";
   private changes: CanvasItem[] = [];
+  private validationError: string | null = null;
   private readonly foundPortraits = new Map<string, string>();
   private readonly inflightPortraits = new Map<string, Promise<string | null>>();
   private readonly portraitJobs = new Map<string, Promise<void>[]>();
@@ -357,11 +453,28 @@ export class CanvasToolHost implements PluginHost {
     if (!enabled) {
       this.changes = [];
       this.turnHint = "";
+      this.validationError = null;
     }
   }
 
   setTurnHint(message: string): void {
     this.turnHint = message.trim();
+    this.validationError = null;
+  }
+
+  private noteCanvasWrite(): void {
+    this.validationError = null;
+  }
+
+  private noteCanvasFailure(error: string): string {
+    this.validationError = error;
+    return error;
+  }
+
+  takeValidationError(): string | undefined {
+    const error = this.validationError ?? undefined;
+    this.validationError = null;
+    return error;
   }
 
   async flushPortraits(sessionId?: string): Promise<void> {
@@ -551,7 +664,7 @@ export class CanvasToolHost implements PluginHost {
     if (name === "canvas_set") {
       const rawItems = asCanvasSetItems(args);
       if (rawItems.length === 0) {
-        return "canvas_set 需要至少一张卡片";
+        return this.noteCanvasFailure("canvas_set 需要至少一张卡片");
       }
       const specs: Array<{
         id?: string;
@@ -559,17 +672,14 @@ export class CanvasToolHost implements PluginHost {
         title: string;
         payload: CanvasPayload;
       }> = [];
+      const parseErrors: string[] = [];
       for (const raw of rawItems) {
         const rec = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+        const title = asString(rec.title) || "未命名";
         const parsed = parseItemArgs(rec);
         if (typeof parsed === "string") {
-          return parsed;
-        }
-        if (
-          parsed.kind === "chart" &&
-          (looksLikeConceptQuery(turnHint) || looksLikePersonQuery(turnHint) || looksLikeWorkQuery(turnHint))
-        ) {
-          return "这是概念、人物或作品题，请改用 kind=card 写知识卡，不要 chart。";
+          parseErrors.push(`「${title}」${parsed}`);
+          continue;
         }
         specs.push({
           id: parsed.requestedId || undefined,
@@ -578,18 +688,28 @@ export class CanvasToolHost implements PluginHost {
           payload: parsed.payload
         });
       }
+      if (parseErrors.length > 0) {
+        return this.noteCanvasFailure(parseErrors.join("；"));
+      }
       const page = specsForCurrentTurn(specs, turnHint);
       if (page.length === 0) {
-        return "这是新人物或新主题：canvas_set 只提交本轮卡片，不要把上一回合的卡再画一遍。";
+        return this.noteCanvasFailure(
+          "这是新人物或新主题：canvas_set 只提交本轮卡片，不要把上一回合的卡再画一遍。"
+        );
+      }
+      const pageError = validateCanvasPage(page, turnHint);
+      if (pageError) {
+        return this.noteCanvasFailure(pageError);
       }
       for (const spec of page) {
         const mediaError = await this.fillImageMedia(spec);
         if (mediaError) {
-          return mediaError;
+          return this.noteCanvasFailure(`「${spec.title}」${mediaError}`);
         }
         this.prepareCardPortrait(spec);
       }
       const items = this.repo.replaceSession(sessionId, page);
+      this.noteCanvasWrite();
       this.changes.push(...items);
       this.queueWrittenPortraits(sessionId, items);
       return `已更新画布：${items.length} 张`;
@@ -597,15 +717,10 @@ export class CanvasToolHost implements PluginHost {
     if (name !== "canvas_put") {
       return `工具不可用：${name}`;
     }
+    const title = asString(args.title) || "未命名";
     const parsed = parseItemArgs(args);
     if (typeof parsed === "string") {
-      return parsed;
-    }
-    if (
-      parsed.kind === "chart" &&
-      (looksLikeConceptQuery(turnHint) || looksLikePersonQuery(turnHint) || looksLikeWorkQuery(turnHint))
-    ) {
-      return "这是概念、人物或作品题，请改用 kind=card 写知识卡，不要 chart。";
+      return this.noteCanvasFailure(`「${title}」${parsed}`);
     }
     const id =
       (parsed.requestedId && this.repo.get(parsed.requestedId, sessionId)?.id) ||
@@ -615,11 +730,17 @@ export class CanvasToolHost implements PluginHost {
     const boardCount = this.repo.list(sessionId).length;
     const wantNewPage = PAGE_REPLACE.test(turnHint);
     if (!overwrite && (boardCount > 0 || wantNewPage)) {
-      return "活板上已有卡片或本轮要换页：新增/整页请用 canvas_set 提交全部卡片并带上要保留的 id；单卡覆盖请带 id 或相同标题。";
+      return this.noteCanvasFailure(
+        "活板上已有卡片或本轮要换页：新增/整页请用 canvas_set 提交全部卡片并带上要保留的 id；单卡覆盖请带 id 或相同标题。"
+      );
+    }
+    const pageError = validateCanvasPage([parsed], turnHint);
+    if (pageError) {
+      return this.noteCanvasFailure(pageError);
     }
     const mediaError = await this.fillImageMedia(parsed);
     if (mediaError) {
-      return mediaError;
+      return this.noteCanvasFailure(`「${parsed.title}」${mediaError}`);
     }
     this.prepareCardPortrait(parsed);
     const item = this.repo.upsert({
@@ -629,6 +750,7 @@ export class CanvasToolHost implements PluginHost {
       title: parsed.title,
       payload: parsed.payload
     });
+    this.noteCanvasWrite();
     this.changes.push(item);
     this.queueWrittenPortraits(sessionId, [item]);
     return `已放到画布：${item.kind} id=${item.id} 「${item.title}」`;

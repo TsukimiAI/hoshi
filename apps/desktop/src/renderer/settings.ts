@@ -80,8 +80,13 @@ type MemoryItem = {
   sourceSessionId: string | null;
   createdAt: string;
   updatedAt: string;
+  ackedAt?: string | null;
   meta?: { source?: string; documentTitle?: string } | null;
 };
+
+function memoryAckBadge(ackedAt: string | null | undefined): string {
+  return ackedAt ? "" : "未确认";
+}
 
 type UsageTotals = {
   promptTokens: number;
@@ -268,9 +273,11 @@ function renderMemories(memories: MemoryItem[], archived: MemoryItem[]): void {
             const source = item.meta?.source === "knowledge" && item.meta.documentTitle
               ? `<div class="memory-source">📄 来自《${escapeHtml(item.meta.documentTitle)}》</div>`
               : "";
+            const ack = memoryAckBadge(item.ackedAt);
+            const ackHtml = ack ? `<span class="memory-ack">${escapeHtml(ack)}</span>` : "";
             return `<article class="memory-card" data-memory-id="${escapeHtml(item.id)}">
         <div class="memory-card-body">
-          <div class="memory-kind">${escapeHtml(memoryKindLabel(item.kind))}</div>
+          <div class="memory-kind">${escapeHtml(memoryKindLabel(item.kind))}${ackHtml}</div>
           <input data-memory-text="${escapeHtml(item.id)}" value="${escapeHtml(item.text)}" />
           ${source}
         </div>
