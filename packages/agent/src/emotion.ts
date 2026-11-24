@@ -1,4 +1,4 @@
-import { isEmotion, type Emotion } from "@hoshi/shared";
+import { EMOTIONS, isEmotion, type Emotion } from "@hoshi/shared";
 
 const BRACKET_MARK_RE = /⟦([\w-]+)⟧/g;
 const EDGE_TILDE_RE = /(?:^[～~]([\w-]+)\s*|[～~]([\w-]+)\s*$)/;
@@ -36,6 +36,30 @@ const ALIAS: Record<string, Emotion> = {
   upset: "sad"
 };
 
+function peelBareEmotion(text: string): { text: string; emotion: Emotion | null } {
+  const names = [...EMOTIONS].sort((left, right) => right.length - left.length);
+  let emotion: Emotion | null = null;
+  let next = text;
+  for (const name of names) {
+    const pattern = new RegExp(`(?<![A-Za-z-])${name.replace(/-/g, "\\-")}(?![A-Za-z-])`, "gi");
+    if (pattern.test(next)) {
+      emotion = name;
+      pattern.lastIndex = 0;
+      next = next.replace(pattern, "");
+    }
+  }
+  next = next.replace(/([\u4e00-\u9fff])([A-Za-z-]{4,})/g, (all, han: string, tail: string) => {
+    const lower = tail.toLowerCase();
+    const hit = names.find((name) => name.endsWith(lower) && name !== lower);
+    if (!hit) {
+      return all;
+    }
+    emotion = hit;
+    return han;
+  });
+  return { text: next.replace(/[ \t]{2,}/g, " ").trim(), emotion };
+}
+
 export function parseSentenceEmotion(
   rawSentence: string,
   fallbackEmotion: Emotion
@@ -59,6 +83,12 @@ export function parseSentenceEmotion(
       emotion = coerced;
     }
     text = text.replace(EDGE_TILDE_RE, "").trim();
+  }
+
+  const peeled = peelBareEmotion(text);
+  text = peeled.text;
+  if (!emotion && peeled.emotion) {
+    emotion = peeled.emotion;
   }
 
   if (!emotion) {

@@ -39,6 +39,12 @@ describe("isKnowledgeHitOnTopic", () => {
     ).toBe(true);
   });
 
+  it("带作品名的问句不能只因「二期」命中医学笔记", () => {
+    expect(isKnowledgeHitOnTopic("查询hololive二期到六期成员资料", "糖尿病视网膜病变二期到六期，每6个月复查。")).toBe(
+      false
+    );
+  });
+
   it("文件系统讲义不能当成页表答案", () => {
     expect(isKnowledgeHitOnTopic("操作系统里的页表概念", "文件系统用 inode 记录文件元数据。")).toBe(
       false

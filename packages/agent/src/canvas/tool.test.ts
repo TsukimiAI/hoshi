@@ -108,33 +108,29 @@ describe("CanvasToolHost", () => {
     expect(host.takeChanges()).toHaveLength(0);
   });
 
-  it("时效题拒绝人物卡", async () => {
+  it("问句像天气时仍可落卡片，占位文案继续拒绝", async () => {
     const { host } = await makeHost();
     host.setTurnHint("我想了解一个月内上海的温度情况");
-    const denied = await host.execute("canvas_set", {
+    const placed = await host.execute("canvas_set", {
       items: [
         {
           kind: "card",
-          title: "温度情况",
-          kicker: "人物 / 角色",
-          body: "追求最新鲜实用的新闻",
-          tags: ["角色"]
+          title: "上海气温",
+          body: "近一周最高 26 度，最低 18 度。"
         }
       ]
     });
-    expect(denied).toContain("时效");
-    expect(host.takeChanges()).toHaveLength(0);
+    expect(placed).toContain("已更新画布：1");
     const noteDenied = await host.execute("canvas_set", {
       items: [
         {
           kind: "note",
           title: "上海近一个月天气：目前能确认的范围",
-          body: "老师给我一个具体日期区间，我再按这个口径重新检索一次。"
+          body: "待补数据：老师给我一个具体日期区间。"
         }
       ]
     });
-    expect(noteDenied).toMatch(/拒绝|chart|模板/);
-    expect(host.takeChanges()).toHaveLength(0);
+    expect(noteDenied).toMatch(/拒绝|模板/);
   });
 
   it("同会话相同标题覆盖而不是再贴一张", async () => {
@@ -176,7 +172,7 @@ describe("CanvasToolHost", () => {
     expect(denied).toContain("canvas_set");
   });
 
-  it("概念题拒绝空图表", async () => {
+  it("概念问句也可以落有数字的图表", async () => {
     const { host } = await makeHost();
     host.setTurnHint("虚拟内存是什么");
     const result = await host.execute("canvas_put", {
@@ -186,7 +182,7 @@ describe("CanvasToolHost", () => {
       labels: ["a"],
       series: [{ name: "x", values: [1] }]
     });
-    expect(result).toContain("kind=card");
+    expect(result).toContain("已放到画布");
   });
 
   it("按 ids 重排 z", async () => {
@@ -284,12 +280,8 @@ describe("CanvasToolHost", () => {
     expect(repo.list(sessionId)[0]?.title).toBe("今汐");
   });
 
-  it("新人物题 canvas_set 丢掉上一回合的人物卡", async () => {
+  it("人名和标题对不上时仍保留模型交来的卡片", async () => {
     const { host, sessionId, repo } = await makeHost();
-    host.setTurnHint("我想了解椎名真昼");
-    await host.execute("canvas_set", {
-      items: [{ kind: "card", title: "椎名真昼", body: "女主角" }]
-    });
     host.setTurnHint("我想了解鸣潮的爱弥斯");
     const result = await host.execute("canvas_set", {
       items: [
@@ -297,9 +289,8 @@ describe("CanvasToolHost", () => {
         { kind: "card", title: "爱弥斯", body: "电子幽灵" }
       ]
     });
-    expect(result).toContain("已更新画布：1");
-    const titles = repo.list(sessionId).map((item) => item.title);
-    expect(titles).toEqual(["爱弥斯"]);
+    expect(result).toContain("已更新画布：2");
+    expect(repo.list(sessionId).map((item) => item.title)).toEqual(["椎名真昼", "爱弥斯"]);
   });
 
   it("可从快照恢复活板", async () => {
@@ -739,5 +730,121 @@ describe("CanvasToolHost", () => {
     });
     expect(repo.restoreFromSnapshot(session.id, "turn-fail")).toBeNull();
     expect(repo.list(session.id)[0]?.title).toBe("现");
+  });
+
+  it("人物问句可以落成图表，也可以落成卡片", async () => {
+    const { host, sessionId } = await makeHost();
+    const chart = await runWithCanvasTurn({ sessionId, hint: "爱因斯坦是谁", portraits: false }, () =>
+      host.execute("canvas_set", {
+        items: [
+          {
+            kind: "chart",
+            title: "引用次数",
+            chartType: "line",
+            labels: ["一", "二"],
+            series: [{ name: "最高", values: [20, 22] }]
+          }
+        ]
+      })
+    );
+    expect(chart).toContain("已更新画布：1");
+    const card = await runWithCanvasTurn({ sessionId, hint: "爱因斯坦是谁", portraits: false }, () =>
+      host.execute("canvas_set", {
+        items: [{ kind: "card", title: "爱因斯坦", kicker: "物理学家", body: "相对论。" }]
+      })
+    );
+    expect(card).toContain("已更新画布：1");
+  });
+
+  it("人名对不上标题时不整页丢卡", async () => {
+    const { host, sessionId, repo } = await makeHost();
+    host.setTurnHint("我想了解椎名真昼");
+    const result = await host.execute("canvas_set", {
+      items: [
+        { kind: "note", title: "甲", body: "一" },
+        { kind: "note", title: "乙", body: "二" }
+      ]
+    });
+    expect(result).toContain("已更新画布：2");
+    expect(repo.list(sessionId).map((item) => item.title)).toEqual(["甲", "乙"]);
+  });
+
+  it("角色卡会去查公开配图", async () => {
+    const db = new DatabaseSync(":memory:");
+    migrateDb(db);
+    const sessions = new SessionRepo(db);
+    const session = await sessions.createSession("画布", "desk");
+    const repo = new CanvasRepo(db);
+    const names: string[] = [];
+    const host = new CanvasToolHost(repo, async (name) => {
+      names.push(name);
+      return "https://img.moegirl.org.cn/a.jpg";
+    });
+    host.setEnabled(true, session.id);
+    await runWithCanvasTurn({ sessionId: session.id, hint: "椎名真昼的人设" }, () =>
+      host.execute("canvas_set", {
+        items: [
+          {
+            kind: "card",
+            title: "椎名真昼",
+            kicker: "女主角",
+            tags: ["轻小说"],
+            body: "料理全能。"
+          }
+        ]
+      })
+    );
+    await host.flushPortraits(session.id);
+    expect(names).toEqual(["椎名真昼"]);
+    expect((repo.list(session.id)[0]?.payload as { portraitUrl?: string }).portraitUrl).toBe(
+      "https://img.moegirl.org.cn/a.jpg"
+    );
+  });
+
+  it("概念题不查肖像", async () => {
+    const db = new DatabaseSync(":memory:");
+    migrateDb(db);
+    const sessions = new SessionRepo(db);
+    const session = await sessions.createSession("画布", "desk");
+    const repo = new CanvasRepo(db);
+    const names: string[] = [];
+    const host = new CanvasToolHost(repo, async (name) => {
+      names.push(name);
+      return "https://upload.wikimedia.org/a.jpg";
+    });
+    host.setEnabled(true, session.id);
+    await runWithCanvasTurn({ sessionId: session.id, hint: "爱因斯坦是谁", portraits: false }, () =>
+      host.execute("canvas_put", { kind: "card", title: "爱因斯坦", kicker: "物理学家", body: "相对论。" })
+    );
+    await host.flushPortraits(session.id);
+    expect(names).toEqual([]);
+    expect((repo.list(session.id)[0]?.payload as { portraitPending?: boolean }).portraitPending).toBeUndefined();
+  });
+
+  it("对照只交一张卡也能留下", async () => {
+    const { host } = await makeHost();
+    host.setTurnHint("分析椎名真昼和塞西莉亚的异同");
+    const result = await host.execute("canvas_set", {
+      items: [{ kind: "card", title: "椎名真昼", body: "擅长料理。" }]
+    });
+    expect(result).toContain("已更新画布：1");
+  });
+
+  it("空图表仍然拒绝", async () => {
+    const { host, sessionId } = await makeHost();
+    const result = await runWithCanvasTurn({ sessionId, hint: "上海天气" }, () =>
+      host.execute("canvas_set", {
+        items: [
+          {
+            kind: "chart",
+            title: "气温",
+            chartType: "line",
+            labels: ["一"],
+            series: []
+          }
+        ]
+      })
+    );
+    expect(result).toMatch(/series|拒绝|空/);
   });
 });

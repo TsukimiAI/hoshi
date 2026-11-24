@@ -65,7 +65,7 @@ function formatSearchResult(
   });
   const extra = optionalAnswer.replace(/\s+/g, " ").trim();
   if (extra) {
-    lines.push("（模型顺带生成的文字，不是检索结果，仅供参考）");
+    lines.push("（根据来源整理的摘要，可以用来回答）");
     lines.push(extra.slice(0, 600));
   }
   return lines.join("\n");

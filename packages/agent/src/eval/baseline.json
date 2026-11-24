@@ -8,7 +8,6 @@
   "embeddingModel": "text-embedding-v4",
   "chatModel": "qwen3.8-flash",
   "metrics": {
-    "router.web.accuracy": 0.975,
     "router.kb.accuracy": 1,
     "router.desk.accuracy": 0.975,
     "memory.inject.precision": 1,

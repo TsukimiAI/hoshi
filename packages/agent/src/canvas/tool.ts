@@ -5,20 +5,34 @@ import type { LlmTool } from "../plugins/types";
 import type { CanvasRepo } from "../storage/canvasRepo";
 import { canonicalizeCanvasImageUrl, lookupPortraitUrl, type PortraitFetcher } from "./portrait";
 import {
-  classifyDeskTurn,
-  extractPortraitName,
-  extractPortraitNames,
   looksLikeChitchat,
   portraitLookupQuery,
   shouldAttachIllustration
 } from "../retrieval/plan";
 
-type CanvasTurnCtx = { sessionId: string; hint: string };
+type CanvasTurnCtx = {
+  sessionId: string;
+  hint: string;
+  portraits?: boolean;
+};
 
 const canvasTurn = new AsyncLocalStorage<CanvasTurnCtx>();
 
 export function runWithCanvasTurn<T>(ctx: CanvasTurnCtx, fn: () => T): T {
   return canvasTurn.run(ctx, fn);
+}
+
+export function updateCanvasTurn(patch: Partial<Pick<CanvasTurnCtx, "hint" | "portraits">>): void {
+  const store = canvasTurn.getStore();
+  if (!store) {
+    return;
+  }
+  if (patch.hint != null) {
+    store.hint = patch.hint;
+  }
+  if (patch.portraits != null) {
+    store.portraits = patch.portraits;
+  }
 }
 
 const KINDS: CanvasKind[] = ["chart", "card", "image", "note", "table", "markdown"];
@@ -319,108 +333,12 @@ export const CANVAS_USAGE_PROMPT = `你在工作台里和老师对话。一份�
 单卡改数字：canvas_put，必须带库存 id 或完全相同的标题。活板上已有卡片时禁止 put 一张新主题。`;
 
 const PAGE_REPLACE = /换成|整页|只要这|重新画|清掉旧/;
-const KEEP_OLD_CARDS = /一起|都放|保留旧|加上|同时放/;
-
-function titleMatchesFocus(title: string, focus: string): boolean {
-  const a = title.replace(/[\s\u3000]+/g, "");
-  const b = focus.replace(/[\s\u3000]+/g, "");
-  if (a.length < 2 || b.length < 2) {
-    return false;
-  }
-  return a.includes(b) || b.includes(a);
-}
-
-function isQuestionDumpTitle(title: string): boolean {
-  const t = title.replace(/[\s\u3000]+/g, "");
-  return t.length > 16 && /分析|什么是|怎么|为什么/.test(t);
-}
-
-function isCompareCompanion(spec: { title: string; kind?: CanvasKind }): boolean {
-  if (spec.kind === "table" || spec.kind === "markdown") {
-    return true;
-  }
-  const t = spec.title.replace(/[\s\u3000]+/g, "");
-  return t.length <= 16 && /异同|对比|比较|萌点|对照|区别/.test(t);
-}
-
-function specsForCurrentTurn<T extends { title: string; kind?: CanvasKind }>(specs: T[], hint: string): T[] {
-  if (KEEP_OLD_CARDS.test(hint)) {
-    return specs;
-  }
-  const turn = classifyDeskTurn(hint);
-  if (turn.kind !== "person" && turn.kind !== "compare") {
-    return specs;
-  }
-  const names = turn.names.length > 0 ? turn.names : extractPortraitNames(hint, "");
-  if (specs.length <= 1) {
-    const only = specs[0];
-    if (only && names.length >= 2 && isQuestionDumpTitle(only.title)) {
-      return [];
-    }
-    return specs;
-  }
-  const focus = names[0] ?? extractPortraitName(hint, "");
-  if (focus.length < 2) {
-    return specs;
-  }
-  const matched = specs.filter((spec) => {
-    if (isQuestionDumpTitle(spec.title)) {
-      return false;
-    }
-    if (names.length >= 2) {
-      return names.some((name) => titleMatchesFocus(spec.title, name)) || isCompareCompanion(spec);
-    }
-    return titleMatchesFocus(spec.title, focus);
-  });
-  return matched.length > 0 ? matched : [];
-}
-
-function cardMeta(payload: CanvasPayload): { kicker?: string; tags?: string[] } {
-  if (!payload || typeof payload !== "object" || !("kicker" in payload || "tags" in payload)) {
-    return {};
-  }
-  const rec = payload as { kicker?: string; tags?: string[] };
-  return { kicker: rec.kicker, tags: rec.tags };
-}
-
-function rejectsKindForHint(hint: string, spec: { kind: CanvasKind; payload: CanvasPayload }): string | null {
-  const turn = classifyDeskTurn(hint).kind;
-  if (turn === "live") {
-    if (spec.kind !== "chart") {
-      return "时效题只接受 kind=chart；摘录没有数字就不要落卡，禁止让老师补日期。";
-    }
-  }
-  if (spec.kind === "chart" && rejectsChartForHint(hint)) {
-    return "这是概念、人物或作品题，请改用 kind=card 写知识卡，不要 chart。";
-  }
-  const meta = cardMeta(spec.payload);
-  if (rejectsLiveCharacterCard(hint, spec.kind, meta.kicker, meta.tags)) {
-    return "这是天气或时效题，请用 kind=chart 填数字，不要人物卡。";
-  }
-  return null;
-}
-
-function rejectsChartForHint(hint: string): boolean {
-  const kind = classifyDeskTurn(hint).kind;
-  return kind === "person" || kind === "compare" || kind === "concept";
-}
-
-function rejectsLiveCharacterCard(hint: string, kind: CanvasKind, kicker?: string, tags?: string[]): boolean {
-  if (classifyDeskTurn(hint).kind !== "live" || kind !== "card") {
-    return false;
-  }
-  return /人物|角色/.test(`${kicker ?? ""} ${(tags ?? []).join(" ")}`);
-}
 
 type PageSpec = { kind: CanvasKind; title: string; payload: CanvasPayload };
 
 export function validateCanvasPage(specs: PageSpec[], hint: string): string | null {
   const errors: string[] = [];
   for (const spec of specs) {
-    const kindError = rejectsKindForHint(hint, spec);
-    if (kindError) {
-      errors.push(`「${spec.title}」${kindError}`);
-    }
     const bodyText = "body" in spec.payload ? String(spec.payload.body ?? "") : "";
     if (looksLikePlaceholderCanvas(spec.title, bodyText)) {
       errors.push(`「${spec.title}」拒绝：缺少实测数字，不要往画布堆待补模板。口头说明即可。`);
@@ -499,8 +417,12 @@ export class CanvasToolHost implements PluginHost {
   }
 
   private wantsIllustration(title: string, payload?: CanvasCardPayload): boolean {
+    const turn = this.turn();
+    if (turn?.portraits === false) {
+      return false;
+    }
     return shouldAttachIllustration({
-      hint: this.turn()?.hint ?? "",
+      hint: turn?.hint ?? "",
       title,
       kicker: payload?.kicker,
       tags: payload?.tags
@@ -633,6 +555,9 @@ export class CanvasToolHost implements PluginHost {
       payload.url = canon;
       return null;
     }
+    if (this.turn()?.portraits === false) {
+      return "图片需要 http(s) URL；这一问不配图。";
+    }
     const found = await this.portraits(this.portraitQuery(spec.title));
     const next = canonicalizeCanvasImageUrl(found ?? "") ?? found;
     if (!next) {
@@ -691,7 +616,7 @@ export class CanvasToolHost implements PluginHost {
       if (parseErrors.length > 0) {
         return this.noteCanvasFailure(parseErrors.join("；"));
       }
-      const page = specsForCurrentTurn(specs, turnHint);
+      const page = specs;
       if (page.length === 0) {
         return this.noteCanvasFailure(
           "这是新人物或新主题：canvas_set 只提交本轮卡片，不要把上一回合的卡再画一遍。"

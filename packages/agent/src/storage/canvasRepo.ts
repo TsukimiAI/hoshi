@@ -50,7 +50,7 @@ function mapRow(row: Record<string, unknown>): CanvasItem {
 function nextSlot(existing: CanvasItem[]): { x: number; y: number } {
   const col = existing.length % 3;
   const row = Math.floor(existing.length / 3);
-  return { x: 24 + col * 340, y: 24 + row * 250 };
+  return { x: 24 + col * 340, y: 24 + row * 420 };
 }
 
 export class CanvasRepo {

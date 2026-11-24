@@ -1,10 +1,4 @@
-import {
-  classifyDeskTurn,
-  extractDeskTopic,
-  extractPortraitNames,
-  extractWorkForName,
-  type DeskTurnKind
-} from "../retrieval/plan";
+import { classifyDeskTurn, extractDeskTopic, extractPortraitNames, type DeskTurnKind } from "../retrieval/plan";
 import { wikiExtractTarget, publicHttpUrl } from "./fetchPage";
 import { looksLikeReadableProse } from "./notes";
 
@@ -43,109 +37,90 @@ export function excerptMatchesQuestion(text: string, message: string): boolean {
   return tokens.some((token) => hay.includes(token));
 }
 
-/** 没有自己的对象、只是接着上一问往下说。完整新问句不算。 */
-function liveFactQueries(message: string): string[] {
-  const stripped = message
-    .replace(/^(?:请)?(?:可以)?(?:帮我)?(?:我想了解|我想问|了解一下|介绍一下)?(?:一下)?/, "")
-    .replace(/一个月以来|一个月内|近一个月|近30天|三十天/g, " ")
-    .replace(/[？?！!。]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  const primary = (stripped || message).slice(0, 40);
-  const queries: string[] = [];
-  const add = (raw: string) => {
-    const text = raw.replace(/\s+/g, " ").trim();
-    if (text.length >= 2 && !queries.includes(text) && queries.length < 4) {
-      queries.push(text);
+const NAV_EXTRA = /站内搜索|搜索代码|帮助文档|Wiki\s*条目|如何搜索|百科全书/;
+const FOLLOW_UP = /再查|再搜|其他地方|换个地方|继续查/;
+
+/** 续问本身没有作品名时，把上一问原句带上，避免只搜到站点帮助页。 */
+export function deskFollowupQuery(message: string, prior: string): string {
+  const current = message.replace(/\s+/g, " ").trim();
+  const earlier = prior.replace(/\s+/g, " ").trim();
+  if (!earlier || earlier === current || !FOLLOW_UP.test(current)) {
+    return "";
+  }
+  const head = earlier.match(/[A-Za-z][A-Za-z0-9]{2,}|[\u4e00-\u9fff]{2,}/)?.[0] ?? "";
+  if (head && current.toLowerCase().includes(head.toLowerCase())) {
+    return "";
+  }
+  return earlier.slice(0, 80);
+}
+
+export function fallbackDeskSearchQuery(message: string, prior: string): string {
+  const current = message.replace(/\s+/g, " ").trim().slice(0, 120);
+  const earlier = deskFollowupQuery(message, prior);
+  if (!earlier) {
+    return current;
+  }
+  return `${earlier} ${current}`.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+export function keepDeskExtra(extra: string): boolean {
+  const text = extra.replace(/\s+/g, " ").trim();
+  return text.length >= 2 && !NAV_EXTRA.test(text);
+}
+
+export function deskQueryList(message: string, extras: string[] = []): string[] {
+  const primary = message.replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!primary) {
+    return [];
+  }
+  const queries = [primary];
+  for (const extra of extras) {
+    const text = extra.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!text || queries.includes(text) || queries.length >= 4) {
+      continue;
     }
-  };
-  add(primary);
-  if (/天气|气温|温度|预报|降雨|降水|湿度|风力/.test(message)) {
-    const city = primary
-      .match(/([\u4e00-\u9fff]{2,8}?)(?:的)?(?:天气|气温|温度|预报|降雨|降水|湿度)/)?.[1]
-      ?.replace(/本周|本月|今天|今日|最近|一周|实时|现在|以来|过去/g, "")
-      .trim();
-    if (city && city.length >= 2) {
-      add(`${city} 每日最高最低气温`);
-      add(`${city} 天气预报`);
-      if (/一个月|本月|近30|三十天|以来/.test(message)) {
-        add(`${city} 近一个月 每日最高最低气温`);
-      }
-    }
+    queries.push(text);
   }
   return queries;
 }
 
-export function buildDeskSearchQueries(message: string, prior = ""): string[] {
-  const turn = classifyDeskTurn(message);
-  if (turn.kind === "live") {
-    return liveFactQueries(message);
-  }
-  if (turn.kind === "chitchat") {
-    return [];
-  }
-  const names = [...turn.names];
-  const ownTopic = extractDeskTopic(message);
-  const usePrior = turn.kind === "followup";
-  if (usePrior) {
-    for (const name of extractPortraitNames(`${message}\n${prior}`)) {
-      if (!names.includes(name)) {
-        names.push(name);
-      }
+export type ListedSearchHit = { index: number; title: string; url: string; text: string };
+
+const PAGE_CHROME = /Help:搜索|搜索代码|CirrusSearch|Skip to content|跳转到正文/;
+
+/** 按搜索引擎给出的顺序读出标题和摘录。帮助页丢掉，其余留给模型挑选。 */
+export function listSearchHits(raw: string): ListedSearchHit[] {
+  const hits: ListedSearchHit[] = [];
+  const blocks = raw.matchAll(/\n(\d+)\.\s+([^\n]+)\n\s+(https?:\/\/\S+)([\s\S]*?)(?=\n\d+\.\s|$)/g);
+  for (const match of blocks) {
+    const title = match[2]?.trim() ?? "";
+    const url = match[3]?.trim() ?? "";
+    const rest = (match[4] ?? "").replace(/\s+/g, " ").trim();
+    const text = `${title} ${rest}`.trim();
+    if (!url || PAGE_CHROME.test(`${title}\n${text}`)) {
+      continue;
+    }
+    hits.push({ index: hits.length + 1, title, url, text });
+    if (hits.length >= 8) {
+      break;
     }
   }
-  const queries: string[] = [];
-  const add = (raw: string) => {
-    const text = raw.replace(/\s+/g, " ").trim();
-    if (text.length < 2 || queries.includes(text) || queries.length >= 4) {
-      return;
+  return hits;
+}
+
+export function hitsByIndex(hits: ListedSearchHit[], indexes: number[]): ListedSearchHit[] {
+  const picked: ListedSearchHit[] = [];
+  for (const index of indexes) {
+    const hit = hits.find((item) => item.index === index);
+    if (!hit || picked.some((item) => item.url === hit.url)) {
+      continue;
     }
-    if (/^(可以)?上网|查一查|搜一下|有关这位/.test(text) && extractPortraitNames(text).length === 0) {
-      return;
-    }
-    queries.push(text);
-  };
-  const seed = usePrior ? `${message}\n${prior}` : message;
-  if (turn.kind === "person" || turn.kind === "compare" || (usePrior && names.length > 0)) {
-    for (const name of names) {
-      const work = extractWorkForName(seed, name) || extractWorkForName(message, name);
-      add(work ? `${work} ${name} 设定` : `${name} 设定`);
-      if (/鸣潮/.test(seed) && !/鸣潮/.test(name)) {
-        add(`鸣潮 ${name}`);
-      }
-    }
-    if (names.length >= 2) {
-      add(`${names.join(" ")} 对比`);
+    picked.push(hit);
+    if (picked.length >= 3) {
+      break;
     }
   }
-  if (queries.length === 0) {
-    const topic = ownTopic || (usePrior ? extractDeskTopic(prior) : "");
-    if (topic) {
-      const angles = ["最强", "保值", "强度", "数值膨胀"].filter((word) => message.includes(word));
-      if (angles.length > 0) {
-        add(`${topic} ${angles.join(" ")} 角色`);
-      }
-      if (/人设|角色/.test(message)) {
-        add(`${topic} 主要角色 人设`);
-      }
-      if (/剧情/.test(message)) {
-        add(`${topic} 重要剧情`);
-      }
-      if (/维基|百科|萌娘|萌百/.test(message)) {
-        add(`${topic} 维基`);
-      }
-      if (queries.length === 0) {
-        add(topic);
-      }
-    } else if (!usePrior) {
-      const stripped = message
-        .replace(/^(请)?(可以)?(帮我)?(上网)?[，, ]*(搜一下|查一下|查一查|搜索)/, "")
-        .replace(/\s+/g, " ")
-        .trim();
-      add((stripped || message).slice(0, 40));
-    }
-  }
-  return queries;
+  return picked;
 }
 
 export function wikiUrlsFromSearchRaw(raw: string, message = ""): string[] {
@@ -206,7 +181,7 @@ export function pageUrlsFromSearchRaw(raw: string, message = "", kind: DeskTurnK
     }
   }
   const preferWiki = kind === "person" || kind === "compare";
-  return (preferWiki ? [...wiki, ...other] : [...other, ...wiki]).slice(0, 2);
+  return (preferWiki ? [...wiki, ...other] : [...other, ...wiki]).slice(0, 6);
 }
 
 export function weatherUrlsFromSearchRaw(raw: string): string[] {
