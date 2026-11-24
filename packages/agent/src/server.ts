@@ -35,7 +35,7 @@ import { OpenAiCompatEmbedding } from "./knowledge/embedding";
 import { KnowledgeService, MAX_TEXT_CHARS } from "./knowledge/service";
 import { KnowledgeToolHost } from "./knowledge/tool";
 import { CanvasRepo } from "./storage/canvasRepo";
-import { CanvasToolHost, CANVAS_USAGE_PROMPT, runWithCanvasTurn } from "./canvas/tool";
+import { CanvasToolHost, CANVAS_USAGE_PROMPT, runWithCanvasTurn, updateCanvasTurn } from "./canvas/tool";
 import { WebToolHost, resolveDeepseekSearchKey } from "./web/tool";
 import { canvasItemIdFromPath } from "./canvas/id";
 import { composeTurnHint } from "./retrieval/plan";
@@ -800,7 +800,7 @@ export function createAgentServer(config: AgentServerConfig) {
       const desk = mode.desk;
       const hint = desk ? String(body.message ?? "") : "";
       canvasHost.setEnabled(desk, sessionId);
-      webHost.setEnabled(desk);
+      webHost.setEnabled(true);
       canvasHost.setTurnHint(hint);
       const runTurn = async (): Promise<void> => {
         const images = sanitizeChatImages(body.images);
@@ -816,7 +816,9 @@ export function createAgentServer(config: AgentServerConfig) {
             .slice(-4)
             .map((item) => item.content)
             .join("\n");
-          canvasHost.setTurnHint(composeTurnHint(hint, prior));
+          const composed = composeTurnHint(hint, prior);
+          canvasHost.setTurnHint(composed);
+          updateCanvasTurn({ hint: composed });
         }
         for await (const event of runSessionChat({
           repo,

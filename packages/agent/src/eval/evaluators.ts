@@ -4,7 +4,7 @@ import type { EmbeddingProvider } from "../knowledge/embedding";
 import { loadVecExtension } from "../knowledge/schema";
 import { selectMemoriesForInject } from "../memory/inject";
 import { resetMemoryVectorTable, searchMemoryVectors, upsertMemoryVector } from "../memory/vec";
-import { classifyDeskTurn, knowledgeRoute, shouldWebSearch } from "../retrieval/plan";
+import { classifyDeskTurn, knowledgeRoute } from "../retrieval/plan";
 import { migrateDb } from "../storage/db";
 import type { FailureRow, InjectCase, MetricScore, RouterCase } from "./types";
 
@@ -16,23 +16,12 @@ export function scoreRouter(cases: RouterCase[]): {
   metrics: Record<string, MetricScore>;
   failures: FailureRow[];
 } {
-  let webOk = 0;
   let kbOk = 0;
   let deskOk = 0;
   const failures: FailureRow[] = [];
   for (const item of cases) {
-    const web = shouldWebSearch(item.text);
     const kb = knowledgeRoute(item.text).kind;
     const desk = classifyDeskTurn(item.text).kind;
-    if (web === item.web) {
-      webOk += 1;
-    } else {
-      failures.push({
-        id: item.id,
-        metric: "router.web.accuracy",
-        reason: `expected web=${item.web} got ${web}`
-      });
-    }
     if (kb === item.kb) {
       kbOk += 1;
     } else {
@@ -55,7 +44,6 @@ export function scoreRouter(cases: RouterCase[]): {
   const n = cases.length;
   return {
     metrics: {
-      "router.web.accuracy": { value: ratio(webOk, n), n, kind: "code" },
       "router.kb.accuracy": { value: ratio(kbOk, n), n, kind: "code" },
       "router.desk.accuracy": { value: ratio(deskOk, n), n, kind: "code" }
     },

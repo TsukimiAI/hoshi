@@ -1,91 +1,48 @@
 import { describe, expect, it } from "vitest";
-import { buildDeskSearchQueries, excerptMatchesQuestion, pageUrlsFromSearchRaw, weatherUrlsFromSearchRaw, wikiUrlsFromSearchRaw } from "./deskRetrieve";
+import { deskFollowupQuery, deskQueryList, excerptMatchesQuestion, fallbackDeskSearchQuery, hitsByIndex, keepDeskExtra, listSearchHits, pageUrlsFromSearchRaw, weatherUrlsFromSearchRaw, wikiUrlsFromSearchRaw } from "./deskRetrieve";
 
-describe("buildDeskSearchQueries", () => {
-  it("无人名整理题用作品主题查询，不用整句", () => {
-    const queries = buildDeskSearchQueries("三体中几个重要角色的名字，人设和重要剧情是怎样的");
-    expect(queries.some((item) => item.includes("三体") && item.includes("人设"))).toBe(true);
-    expect(queries.some((item) => item.includes("剧情"))).toBe(true);
-    expect(queries.every((item) => !item.includes("怎样的"))).toBe(true);
-  });
-  it("对照问句按角色名生成设定查询", () => {
-    const queries = buildDeskSearchQueries("对比分析鸣潮爱弥斯和莫宁的萌点");
-    expect(queries.some((item) => item.includes("爱弥斯"))).toBe(true);
-    expect(queries.some((item) => item.includes("莫宁"))).toBe(true);
-    expect(queries.length).toBeGreaterThanOrEqual(2);
-    expect(queries.length).toBeLessThanOrEqual(4);
+describe("deskQueryList", () => {
+  it("第一条就是原问句，空问句不搜", () => {
+    const message = "鸣潮目前的T0角色和队伍";
+    expect(deskQueryList(message, ["鸣潮 T0 配队", message])[0]).toBe(message);
+    expect(deskQueryList(message, ["鸣潮 T0 配队"])).toEqual([message, "鸣潮 T0 配队"]);
+    expect(deskQueryList("  ")).toEqual([]);
   });
 
-  it("这位角色结合上文，不拿整句去搜", () => {
-    const queries = buildDeskSearchQueries("可以上网查一查有关这位角色的情报", "拉海洛的巫女大人指的是绯雪，不是锁琅\n鸣潮心是一位怎样的角色");
-    expect(queries.some((item) => item.includes("绯雪"))).toBe(true);
-    expect(queries.every((item) => !item.includes("可以上网"))).toBe(true);
+  it("搜索结果按引擎顺序保留，帮助页丢掉，编号交给模型选", () => {
+    const raw = `
+1. 天气
+   https://zh.moegirl.org.cn/天气
+   天气（Weather）是指某一个地区距离地表较近的大气层
+2. 搜索代码
+   https://zh.moegirl.org.cn/Help:搜索
+   Skip to content 萌娘百科 CirrusSearch 搜索代码
+3. hololive
+   https://zh.moegirl.org.cn/Hololive
+   hololive每一期 成员介绍 图片
+4. NIKKE
+   https://nikke.example/cn
+   胜利女神 国服 新角色`;
+    const listed = listSearchHits(raw);
+    expect(listed.map((hit) => hit.url)).toEqual([
+      "https://zh.moegirl.org.cn/天气",
+      "https://zh.moegirl.org.cn/Hololive",
+      "https://nikke.example/cn"
+    ]);
+    expect(hitsByIndex(listed, [3, 2]).map((hit) => hit.url)).toEqual([
+      "https://nikke.example/cn",
+      "https://zh.moegirl.org.cn/Hololive"
+    ]);
   });
 
-  it("指代题即使写了作品名，仍用上文角色", () => {
-    const queries = buildDeskSearchQueries(
-      "可以上网查一查鸣潮中的这位角色",
-      "拉海洛的巫女大人指的是绯雪，不是锁琅"
-    );
-    expect(queries.some((item) => item.includes("绯雪"))).toBe(true);
-  });
-
-  it("完整新问句不沿用上一页角色", () => {
-    const queries = buildDeskSearchQueries(
-      "崩铁现在数值膨胀严重，哪些角色还能使用？",
-      "拉海洛的巫女大人指的是绯雪，不是锁琅\n鸣潮"
-    );
-    expect(queries.some((item) => item.includes("崩铁") && item.includes("数值膨胀"))).toBe(true);
-    expect(queries.every((item) => !item.includes("绯雪") && !item.includes("鸣潮"))).toBe(true);
-  });
-
-  it("短追问仍用上文角色", () => {
-    const queries = buildDeskSearchQueries("再详细一点", "拉海洛的巫女大人指的是绯雪，不是锁琅");
-    expect(queries.some((item) => item.includes("绯雪"))).toBe(true);
-  });
-
-  it("新作品问句不沿用上一页角色", () => {
-    const prior = "拉海洛的巫女大人指的是绯雪，不是锁琅\n更像是作品设定的巫女身份或称号和锁琅\n鸣潮";
-    const queries = buildDeskSearchQueries("重返未来1999中最强，最保值的角色是哪个", prior);
-    expect(queries.some((item) => item.includes("重返未来1999") && item.includes("最强"))).toBe(true);
-    expect(queries.every((item) => !item.includes("绯雪") && !item.includes("巫女") && !item.includes("鸣潮"))).toBe(
-      true
-    );
-  });
-
-  it("天气问句按预报检索，不加成设定，也不沿用上一页角色", () => {
-    const queries = buildDeskSearchQueries("我想了解本周上海天气", "拉海洛的巫女大人指的是绯雪");
-    expect(queries[0]).toBe("本周上海天气");
-    expect(queries).toContain("上海 天气预报");
-    expect(queries).toContain("上海 每日最高最低气温");
-    expect(queries.every((item) => !item.includes("设定") && !item.includes("绯雪"))).toBe(true);
-  });
-
-  it("温度问句也按预报检索，不加设定", () => {
-    const queries = buildDeskSearchQueries("我想了解一个月内上海的温度情况", "指的是绯雪");
-    expect(queries.some((item) => item.includes("上海") && item.includes("温度"))).toBe(true);
-    expect(queries).toContain("上海 天气预报");
-    expect(queries.every((item) => !item.includes("设定") && !item.includes("绯雪"))).toBe(true);
-  });
-
-  it("一个月以来问句城市是上海，并带近一个月气温", () => {
-    const queries = buildDeskSearchQueries("我想了解一个月以来上海的天气情况");
-    expect(queries.every((item) => !item.includes("以来上海"))).toBe(true);
-    expect(queries).toContain("上海 天气预报");
-    expect(queries).toContain("上海 近一个月 每日最高最低气温");
-    expect(queries.every((item) => !item.includes("设定"))).toBe(true);
-  });
-
-  it("有主题的整理题不混入旧卡人名", () => {
-    const queries = buildDeskSearchQueries("三体中几个重要角色的名字，人设和重要剧情是怎样的", "指的是绯雪");
-    expect(queries.some((item) => item.includes("三体"))).toBe(true);
-    expect(queries.every((item) => !item.includes("绯雪"))).toBe(true);
-  });
-
-  it("概念题按问句检索，不改成维基人设", () => {
-    const queries = buildDeskSearchQueries("解释一下虚拟内存");
-    expect(queries.some((item) => item.includes("虚拟内存"))).toBe(true);
-    expect(queries.every((item) => !item.includes("维基") && !item.includes("人设"))).toBe(true);
+  it("再去萌娘查时带上上一问", () => {
+    const prior = "hololive每一期的成员介绍和图片";
+    const message = "在萌娘或者其他地方再查查";
+    expect(deskFollowupQuery(message, prior)).toBe(prior);
+    expect(fallbackDeskSearchQuery(message, prior)).toBe(`${prior} ${message}`);
+    expect(fallbackDeskSearchQuery("鸣潮目前的T0角色和队伍", prior)).toBe("鸣潮目前的T0角色和队伍");
+    expect(keepDeskExtra("萌娘百科 站内搜索")).toBe(false);
+    expect(keepDeskExtra("萌娘 Wiki 条目")).toBe(false);
   });
 });
 

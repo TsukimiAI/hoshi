@@ -69,9 +69,8 @@ describe("eval evaluators", () => {
     expect(scored.failures[0]?.reason).toMatch(/injected none/);
   });
 
-  it("路由三项分开计", () => {
+  it("路由两项分开计", () => {
     const scored = scoreRouter(loadRouterDataset().cases.slice(0, 3));
-    expect(scored.metrics["router.web.accuracy"]?.n).toBe(3);
     expect(scored.metrics["router.kb.accuracy"]?.n).toBe(3);
     expect(scored.metrics["router.desk.accuracy"]?.n).toBe(3);
   });
@@ -80,7 +79,6 @@ describe("eval evaluators", () => {
     const scored = scoreRouter(loadRouterDataset().cases);
     expect(scored.failures).toEqual([]);
     expect(scored.metrics["router.kb.accuracy"]?.value).toBe(1);
-    expect(scored.metrics["router.web.accuracy"]?.value).toBe(1);
     expect(scored.metrics["router.desk.accuracy"]?.value).toBe(1);
   });
 });
@@ -89,7 +87,7 @@ describe("eval baseline", () => {
   it("基线没有的评分只打印", () => {
     const compared = compareBaseline(
       record({
-        metrics: { "router.web.accuracy": { value: 0.5, n: 10, kind: "code" } }
+        metrics: { "router.kb.accuracy": { value: 0.5, n: 10, kind: "code" } }
       }),
       baseline()
     );
@@ -105,12 +103,12 @@ describe("eval baseline", () => {
   it("代码分低于基线失败", () => {
     const compared = compareBaseline(
       record({
-        metrics: { "router.web.accuracy": { value: 0.4, n: 10, kind: "code" } }
+        metrics: { "router.kb.accuracy": { value: 0.4, n: 10, kind: "code" } }
       }),
-      baseline({ metrics: { "router.web.accuracy": 0.8 } })
+      baseline({ metrics: { "router.kb.accuracy": 0.8 } })
     );
     expect(compared.ok).toBe(false);
-    expect(compared.reasons.join("\n")).toMatch(/router.web.accuracy/);
+    expect(compared.reasons.join("\n")).toMatch(/router.kb.accuracy/);
   });
 
   it("模型分在 0.05 内通过", () => {

@@ -62,7 +62,6 @@ export interface BaselineFile {
 export interface RouterCase {
   id: string;
   text: string;
-  web: boolean;
   kb: KnowledgeRouteKind;
   desk: DeskTurnKind;
 }

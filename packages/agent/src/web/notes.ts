@@ -50,6 +50,45 @@ function isTitleOnlyChunk(text: string): boolean {
   return !/[。！？，、]|是|的|了/.test(t);
 }
 
+/** 门户页开头的链接墙、空锚点。留下后面的正文。 */
+export function stripSiteChrome(text: string): string {
+  const kept: string[] = [];
+  for (const line of text.split(/\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || /javascript:/i.test(trimmed)) {
+      continue;
+    }
+    const withoutLinks = trimmed
+      .replace(/\[[^\]]{0,40}\]\([^)]*\)/g, "")
+      .replace(/https?:\/\/\S+/gi, "")
+      .replace(/[-—|/]/g, "")
+      .replace(/\s+/g, "");
+    const linkCount = trimmed.match(/\[[^\]]+\]\([^)]*\)/g)?.length ?? 0;
+    if (linkCount >= 2 && withoutLinks.length < 16) {
+      continue;
+    }
+    if (linkCount >= 1 && withoutLinks.length < 4) {
+      continue;
+    }
+    kept.push(trimmed);
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** 动态里展示的摘录停在句号上，避免半句话看起来像没抓完。 */
+export function proseExcerpt(text: string, max = 800): string {
+  const flat = stripSiteChrome(text).replace(/\s+/g, " ").trim();
+  if (flat.length <= max) {
+    return flat;
+  }
+  const window = flat.slice(0, max);
+  const end = Math.max(window.lastIndexOf("。"), window.lastIndexOf("！"), window.lastIndexOf("？"));
+  if (end >= 40) {
+    return window.slice(0, end + 1);
+  }
+  return window;
+}
+
 export function looksLikeReadableProse(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed || looksLikeSearchToolDump(trimmed) || /还在整理/.test(trimmed) || TOOL_TALK.test(trimmed)) {
@@ -61,7 +100,7 @@ export function looksLikeReadableProse(text: string): boolean {
 }
 
 export function takeOptionalSearchAnswer(raw: string): string {
-  const match = raw.match(/（模型顺带生成的文字[^\n]*）\n([\s\S]*)$/);
+  const match = raw.match(/（根据来源整理的摘要[^\n]*）\n([\s\S]*)$/);
   const text = match?.[1]?.replace(/\s+/g, " ").trim() ?? "";
   if (!text || text.length < 12 || /未检索到|无法上网|没有搜索|不能上网/.test(text)) {
     return "";
@@ -81,7 +120,7 @@ export function humanizeSearchNotes(raw: string): string {
   if (!looksLikeSearchToolDump(text) && !/来源：/.test(text) && !/\d+\.\s*\S+\s+https?:\/\//.test(text)) {
     return looksLikeReadableProse(text) ? text.replace(/\s+/g, " ").trim() : "";
   }
-  const source = text.replace(/（模型顺带生成的文字[\s\S]*$/, "");
+  const source = text.replace(/（根据来源整理的摘要[\s\S]*$/, "");
   const start = source.search(/\d+\.\s/);
   const body = start >= 0 ? source.slice(start) : source;
   const chunks: string[] = [];

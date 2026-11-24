@@ -3,6 +3,10 @@ export const EMOTION_USAGE_PROMPT =
 
 export const SEARCH_USAGE_PROMPT = `你能联网。检索由系统判定并自动完成，禁止说自己上不了网、没有浏览器、知识截止不能查。${EMOTION_USAGE_PROMPT}`;
 
+/** 桌宠还没搜时。搜完后从口播消息里拿掉，避免流式阶段再说「我去搜」。 */
+export const PET_ANSWER_PROMPT =
+  "能答就不要搜。固有知识和已经给出的知识库摘录够用就直接回答，不要为了保险调用 web_search 或 web_fetch。只有答不出（时效、不了解的公开事实、知识库没写到的部分）才搜索。禁止说自己上不了网、没有浏览器、知识截止不能查。";
+
 export function parseSiteLines(raw: string): string[] {
   return raw
     .split(/\r?\n/)

@@ -85,6 +85,9 @@ export function isKnowledgeHitOnTopic(query: string, text: string): boolean {
   if (grams.length === 0 && aliases.length === 0) {
     return compactQuery.length < 2 && ascii.length === 0;
   }
+  if (ascii.length > 0 && !ascii.some((token) => hay.includes(token) || hayCompact.includes(token))) {
+    return false;
+  }
   if (grams.some((gram) => termHitsHay(gram, hay, hayCompact))) {
     return true;
   }

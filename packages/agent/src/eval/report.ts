@@ -26,7 +26,6 @@ export function printSummary(record: ExperimentRecord): void {
     return `${label}=${score.value.toFixed(2)} n=${score.n}`;
   };
   log(`=== Hoshi eval ${record.tier} ${record.experimentId} ===`);
-  log(line("router.web.accuracy", "router web accuracy"));
   log(line("router.kb.accuracy", "router kb accuracy"));
   log(line("router.desk.accuracy", "router desk accuracy"));
   log(line("memory.inject.precision", "memory inject precision"));

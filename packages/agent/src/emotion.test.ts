@@ -17,6 +17,13 @@ describe("parseSentenceEmotion", () => {
     expect(out).toEqual({ text: "老师早上好", emotion: "expect", explicit: false });
   });
 
+  it("裸写的表情词和被切断的词不留在口播里", () => {
+    expect(parseSentenceEmotion("不能编一个名字。doubt可以把公告贴过来。expect", "normal").text).toBe(
+      "不能编一个名字。可以把公告贴过来。"
+    );
+    expect(parseSentenceEmotion("我不能编造具体角色名ignation", "normal").text).toBe("我不能编造具体角色名");
+  });
+
   it("解析句末 ～emotion 并去掉标记", () => {
     expect(parseSentenceEmotion("释放高倍率技能～happy", "normal")).toEqual({
       text: "释放高倍率技能",

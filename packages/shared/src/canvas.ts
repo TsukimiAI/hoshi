@@ -56,6 +56,23 @@ export type CanvasPayload =
   | CanvasTablePayload
   | CanvasMarkdownPayload;
 
+export type CanvasLayoutRole = "wide" | "half";
+
+/** 渲染用的跨列角色。模型不写坐标，也不写这个字段。 */
+export function canvasLayoutRole(
+  kind: CanvasKind,
+  payload: { body?: string } | CanvasPayload
+): CanvasLayoutRole {
+  if (kind === "chart" || kind === "table") {
+    return "wide";
+  }
+  if (kind === "markdown") {
+    const body = "body" in payload ? String(payload.body ?? "") : "";
+    return body.length > 180 ? "wide" : "half";
+  }
+  return "half";
+}
+
 export interface CanvasItem {
   id: string;
   kind: CanvasKind;

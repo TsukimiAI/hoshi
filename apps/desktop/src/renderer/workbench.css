@@ -1190,14 +1190,16 @@ button:disabled {
 
 #desk-board {
   flex: 1;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-  gap: 16px;
-  align-content: start;
-  padding: 18px;
+  position: relative;
   overflow: auto;
   background: #f3f4f1;
   min-height: 0;
+}
+
+.desk-canvas {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
 }
 
 #desk-board.desk-generating {
@@ -1206,15 +1208,30 @@ button:disabled {
 }
 
 .desk-item {
-  position: relative;
+  position: absolute;
   min-width: 0;
+  height: auto;
   background: #fbfbf8;
   border: 1px solid #e6e7e2;
   border-radius: 10px;
   box-shadow: 0 10px 28px rgba(40, 48, 40, 0.08);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.desk-item-wide {
+  grid-column: span 2;
+}
+
+.desk-item-sole {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 700px) {
+  .desk-item-wide {
+    grid-column: span 1;
+  }
 }
 
 .desk-item-chart {
@@ -1231,10 +1248,10 @@ button:disabled {
 
 .desk-portrait {
   width: 100%;
-  max-height: 220px;
-  min-height: 120px;
-  object-fit: cover;
-  object-position: top;
+  height: auto;
+  max-height: none;
+  object-fit: contain;
+  object-position: center;
   border-radius: 8px;
   margin-bottom: 10px;
   background: #eceee9;
@@ -1256,6 +1273,8 @@ button:disabled {
   gap: 8px;
   padding: 14px 16px 8px;
   cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
 .desk-item-titles {
@@ -1268,12 +1287,14 @@ button:disabled {
   font-size: 16px;
   font-weight: 650;
   color: #24302c;
+  overflow-wrap: anywhere;
 }
 
 .desk-item-titles p {
   margin: 4px 0 0;
   font-size: 12px;
   color: #8b938c;
+  overflow-wrap: anywhere;
 }
 
 .desk-item-kind {
@@ -1309,8 +1330,8 @@ button:disabled {
 
 .desk-item-body {
   padding: 4px 16px 16px;
-  overflow: auto;
-  flex: 1;
+  overflow: visible;
+  flex: 0 0 auto;
   font-size: 13px;
   color: #4d5752;
   line-height: 1.5;
@@ -1320,6 +1341,21 @@ button:disabled {
 .desk-item-body.desk-md,
 .desk-item-body.desk-table-wrap {
   white-space: normal;
+}
+
+.desk-md {
+  white-space: normal;
+}
+
+.desk-md pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  overflow: visible;
+  background: #eef0ec;
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
 }
 
 .desk-md h3,
@@ -1357,6 +1393,9 @@ button:disabled {
   border: 1px solid #e2e4de;
   padding: 6px 8px;
   text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
 }
 
 .desk-table th {
@@ -1399,7 +1438,7 @@ button:disabled {
 
 .desk-chart {
   width: 100%;
-  height: 220px;
+  height: 260px;
   display: block;
 }
 

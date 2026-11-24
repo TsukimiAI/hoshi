@@ -13,16 +13,12 @@ import type { PersonaConfig } from "./persona";
 import { parseToolArgs } from "./plugins/parseTool";
 import type { LlmTool } from "./plugins/types";
 import { buildMemoryAckPrompt, buildMemoryInjectPrompt, type MemoryInjectLine } from "./memory/inject";
-import { buildSearchSitesPrompt, parseSiteLines, EMOTION_USAGE_PROMPT, SEARCH_USAGE_PROMPT } from "./searchPrompt";
-import { buildDeskCanvasPrompt, buildIntegratePrompt, classifyDeskTurn, hasLiveFactNumbers, knowledgeHitLooksEmpty, knowledgeRoute, looksLikeUsableWebBrief, shouldWebSearch, WEB_BRIEF_PROMPT } from "./retrieval/plan";
-import { deskSearchNotes, formatSearchActivity, humanizeSearchNotes, looksLikeReadableProse } from "./web/notes";
-import {
-  buildDeskSearchQueries,
-  excerptMatchesQuestion,
-  mergeDeskBrief,
-  pageUrlsFromSearchRaw,
-  stripFetchPrefix
-} from "./web/deskRetrieve";
+import { buildSearchSitesPrompt, parseSiteLines, EMOTION_USAGE_PROMPT, PET_ANSWER_PROMPT } from "./searchPrompt";
+import { buildDeskCanvasGuide, buildIntegratePrompt, classifyDeskTurn, DESK_CRITIC_PROMPT, DESK_FORM_PROMPT, DESK_WEB_PROMPT, knowledgeHitLooksEmpty, knowledgeRoute, looksLikeLocalKnowledgeQuery, parseDeskCanvasChoice, parseDeskCritic, type DeskCanvasChoice } from "./retrieval/plan";
+import { updateCanvasTurn } from "./canvas/tool";
+import { formatSearchActivity, humanizeSearchNotes, looksLikeReadableProse } from "./web/notes";
+import { stripFetchPrefix } from "./web/deskRetrieve";
+import { normalizeQueries } from "./web/merge";
 import { hasSpeechContent, SentenceSplitter } from "./sentence";
 
 export interface PluginHost {
@@ -104,199 +100,245 @@ export class AgentRuntime {
       (tool) => tool.function.name === "search_knowledge" || tool.function.name === "list_knowledge"
     );
     const webTools = tools.some((tool) => tool.function.name === "web_search");
-    const canFetch = tools.some((tool) => tool.function.name === "web_fetch");
     const desk = body.workspace === "desk";
-    const deskTurn = classifyDeskTurn(message);
+    let turnUsage: LlmUsage | undefined;
     const kbRoute = knowledgeRoute(message);
-    const web = shouldWebSearch(message);
     const canvasTools = tools.filter((tool) => tool.function.name.startsWith("canvas_"));
-    const modelTools = desk
-      ? canvasTools
-      : tools.filter((tool) => tool.function.name !== "search_knowledge");
+    const sessionId = extra?.sessionId ?? body.sessionId;
+    const chitchat = !desk && classifyDeskTurn(message).kind === "chitchat";
+    const noteQuestion = kbRoute.kind === "summarize" || looksLikeLocalKnowledgeQuery(message);
+    const petCanSearch = !desk && !chitchat && !noteQuestion && webTools;
+    const web = desk ? message.trim().length > 0 && webTools : !chitchat && !noteQuestion;
+    const kbWanted = desk ? message.trim().length > 0 : kbRoute.kind !== "skip";
+    let modelTools = desk
+      ? []
+      : tools.filter((tool) => {
+          const name = tool.function.name;
+          if (name === "search_knowledge") {
+            return false;
+          }
+          if ((name === "web_search" || name === "web_fetch") && !petCanSearch) {
+            return false;
+          }
+          return true;
+        });
+    let canvasChoice: DeskCanvasChoice = { canvas: desk && message.trim().length > 0, images: false, form: "note" };
 
     yield { event: "progress", data: { phase: "think" } };
     const thinkStarted = Date.now();
 
-    if (!desk) {
-      yield {
-        event: "progress",
-        data: { phase: "tool_start", name: "联网", detail: web ? "检索网页" : "本次不必联网" }
-      };
-      yield {
-        event: "progress",
-        data: {
-          phase: "tool_done",
-          name: "联网",
-          detail: web ? "已开启网页检索" : "跳过",
-          ok: true,
-          elapsedMs: 0
+    let kbBody: string | null = null;
+    let webBody: string | null = null;
+    let webSearched = false;
+    const webEvents: AgentEvent[] = [];
+    const rememberWeb = (event: AgentEvent): void => {
+      webEvents.push(event);
+    };
+    let webAborted = false;
+    const deskContext = desk ? deskContextText(body.history, message) : "";
+    let searchQuestion = message.trim();
+    const runKb = async (): Promise<void> => {
+      if (!(kbEnabled && kbWanted && this.config.plugins)) {
+        return;
+      }
+      const raw = await this.config.plugins
+        .execute("search_knowledge", {
+          query: !desk && kbRoute.kind === "summarize" ? kbRoute.query : searchQuestion,
+          mode: desk ? "lookup" : kbRoute.kind
+        })
+        .catch((error) => (error instanceof Error ? error.message : "检索失败"));
+      if (!knowledgeHitLooksEmpty(raw)) {
+        kbBody = raw;
+      }
+    };
+    const runWeb = async (): Promise<void> => {
+      const plugins = this.config.plugins;
+      const webToolList = tools.filter(
+        (tool) => tool.function.name === "web_search" || tool.function.name === "web_fetch"
+      );
+      if (!(web && webTools && plugins) || webToolList.length === 0) {
+        return;
+      }
+      const sitePrompt = buildSearchSitesPrompt(parseSiteLines(this.referenceSites));
+      let pending: LlmMessage[] = [
+        { role: "system", content: DESK_WEB_PROMPT },
+        ...(sitePrompt ? [{ role: "system" as const, content: sitePrompt }] : []),
+        ...toLlmMessages(body.history ?? []),
+        { role: "user", content: userContentWithImages(message, images) }
+      ];
+      const asked: string[] = [];
+      const pieces: string[] = [];
+      for (let round = 0; round < 6; round += 1) {
+        if (extra?.signal?.aborted) {
+          webAborted = true;
+          return;
         }
-      };
+        let complete: {
+          content: string;
+          toolCalls: Array<{ id: string; name: string; argumentsJson: string }>;
+          usage?: LlmUsage;
+        };
+        try {
+          complete = await withTimeout(
+            this.config.llm.completeChat(pending, webToolList, {
+              timeoutMs: 0,
+              enableSearch: false,
+              purpose: "tool",
+              sessionId
+            }),
+            0,
+            "检索规划超时"
+          );
+        } catch {
+          break;
+        }
+        if (complete.usage) {
+          this.config.llm.noteUsage?.("tool", complete.usage, sessionId);
+          turnUsage = addUsage(turnUsage, complete.usage);
+        }
+        const calls = complete.toolCalls.filter(
+          (call) => call.name === "web_search" || call.name === "web_fetch"
+        );
+        if (calls.length === 0) {
+          break;
+        }
+        const assistantToolCalls = calls.map((call) => ({
+          id: call.id,
+          type: "function" as const,
+          function: { name: call.name, arguments: call.argumentsJson }
+        }));
+        pending = [
+          ...pending,
+          { role: "assistant", content: complete.content || null, tool_calls: assistantToolCalls }
+        ];
+        for (const call of calls) {
+          if (extra?.signal?.aborted) {
+            webAborted = true;
+            return;
+          }
+          const args = parseToolArgs(call.argumentsJson);
+          if (call.name === "web_search") {
+            const queries = normalizeQueries(args);
+            if (Array.isArray(queries)) {
+              for (const query of queries) {
+                if (!asked.includes(query)) {
+                  asked.push(query);
+                }
+              }
+            }
+          }
+          webSearched = true;
+          rememberWeb({
+            event: "progress",
+            data: { phase: "tool_start", name: call.name, detail: summarizeToolArgs(call.argumentsJson) }
+          });
+          const started = Date.now();
+          const result = await withTimeout(
+            plugins.execute(call.name, args),
+            65000,
+            `tool ${call.name} timeout`
+          ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
+          const ok = toolResultOk(call.name, result);
+          pieces.push(result.slice(0, ok ? 4000 : 800));
+          rememberWeb({
+            event: "progress",
+            data: {
+              phase: "tool_done",
+              name: call.name,
+              detail: call.name === "web_search" ? formatSearchActivity(result) : result.slice(0, 800),
+              ok,
+              elapsedMs: Date.now() - started
+            }
+          });
+          pending.push({ role: "tool", tool_call_id: call.id, content: result });
+        }
+      }
+      if (
+        !webSearched &&
+        classifyDeskTurn(message).kind !== "chitchat" &&
+        kbRoute.kind !== "summarize"
+      ) {
+        const query = message.trim().slice(0, 200);
+        if (query) {
+          webSearched = true;
+          asked.push(query);
+          rememberWeb({
+            event: "progress",
+            data: { phase: "tool_start", name: "web_search", detail: query }
+          });
+          const started = Date.now();
+          const result = await withTimeout(
+            plugins.execute("web_search", { queries: [query] }),
+            65000,
+            "tool web_search timeout"
+          ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
+          pieces.push(result.slice(0, 4000));
+          rememberWeb({
+            event: "progress",
+            data: {
+              phase: "tool_done",
+              name: "web_search",
+              detail: formatSearchActivity(result),
+              ok: toolResultOk("web_search", result),
+              elapsedMs: Date.now() - started
+            }
+          });
+        }
+      }
+      if (asked.length > 0) {
+        searchQuestion = asked.join("；").slice(0, 200);
+      }
+      const joined = pieces.join("\n").trim();
+      webBody = joined ? joined.slice(0, 8000) : webSearched ? "没搜到贴合资料" : null;
+    };
+    if (desk) {
+      await runWeb();
+      if (webAborted || extra?.signal?.aborted) {
+        return;
+      }
+      for (const event of webEvents) {
+        yield event;
+      }
     }
     yield {
       event: "progress",
       data: {
         phase: "tool_start",
         name: "知识库",
-        detail: !kbEnabled ? "未启用" : kbRoute.kind === "skip" ? "跳过" : "检查知识库"
+        detail: !kbEnabled ? "未启用" : !kbWanted ? "跳过" : "检查知识库"
       }
     };
     const kbStarted = Date.now();
-    let kbBody: string | null = null;
-    if (kbEnabled && kbRoute.kind !== "skip" && this.config.plugins) {
-      const raw = await this.config.plugins
-        .execute("search_knowledge", {
-          query: kbRoute.query,
-          mode: kbRoute.kind
-        })
-        .catch((error) => (error instanceof Error ? error.message : "检索失败"));
-      if (!knowledgeHitLooksEmpty(raw)) {
-        kbBody = raw;
-      }
-    }
+    await runKb();
     yield {
       event: "progress",
       data: {
         phase: "tool_done",
         name: "知识库",
-        detail: !kbEnabled ? "未启用" : kbRoute.kind === "skip" ? "跳过" : kbBody ? "已命中相关文档" : "无相关文档",
+        detail: !kbEnabled ? "未启用" : !kbWanted ? "跳过" : kbBody ? "已命中相关文档" : "无相关文档",
         ok: true,
         elapsedMs: Date.now() - kbStarted
       }
     };
-
-    let webBody: string | null = null;
-    let webSearched = false;
-    let turnUsage: LlmUsage | undefined;
-    if (desk && web && webTools && this.config.plugins) {
-      const queries = buildDeskSearchQueries(message, deskPriorText(body.history, extra?.canvasPrompt));
-      if (queries.length > 0) {
-        webSearched = true;
-        yield {
-          event: "progress",
-          data: { phase: "tool_start", name: "web_search", detail: queries.join("；") }
-        };
-        const searchStarted = Date.now();
-        const searchRaw = await withTimeout(
-          this.config.plugins.execute("web_search", { queries }),
-          0,
-          "tool web_search timeout"
-        ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
-        const searchOk = toolResultOk("web_search", searchRaw);
-        const notes = searchOk ? deskSearchNotes(searchRaw) : "";
-        if (notes && deskTurn.kind !== "live") {
-          webBody = notes;
-        }
-        yield {
-          event: "progress",
-          data: {
-            phase: "tool_done",
-            name: "web_search",
-            detail: formatSearchActivity(searchRaw),
-            ok: searchOk,
-            elapsedMs: Date.now() - searchStarted
-          }
-        };
-        let fetchBundle = "";
-        if (searchOk && canFetch) {
-          const urls = pageUrlsFromSearchRaw(searchRaw, message, deskTurn.kind);
-          for (const url of urls) {
-            if (extra?.signal?.aborted) {
-              return;
-            }
-            yield {
-              event: "progress",
-              data: {
-                phase: "tool_start",
-                name: "web_fetch",
-                detail: deskTurn.kind === "live" ? "预报摘录" : "网页摘录"
-              }
-            };
-            const fetchStarted = Date.now();
-            const fetchRaw = await withTimeout(
-              this.config.plugins.execute("web_fetch", { url }),
-              0,
-              "tool web_fetch timeout"
-            ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
-            const fetchOk = toolResultOk("web_fetch", fetchRaw) && !/抓取失败/.test(fetchRaw);
-            const fetched = stripFetchPrefix(fetchRaw);
-            const aligned = fetchOk && excerptMatchesQuestion(fetched, message);
-            if (aligned && looksLikeReadableProse(fetched)) {
-              if (deskTurn.kind === "live") {
-                fetchBundle = mergeDeskBrief([fetchBundle, fetched]);
-              } else {
-                webBody = mergeDeskBrief([webBody ?? "", fetched]) || webBody;
-              }
-            }
-            const fetchDetail = aligned
-              ? fetched
-                  .replace(/https?:\/\/[^\s]+/gi, "")
-                  .replace(/\s+/g, " ")
-                  .trim()
-                  .slice(0, 800)
-              : fetchOk
-                ? "摘录和这一问对不上，已略过"
-                : fetched
-                    .replace(/https?:\/\/[^\s]+/gi, "")
-                    .replace(/\s+/g, " ")
-                    .trim()
-                    .slice(0, 800);
-            yield {
-              event: "progress",
-              data: {
-                phase: "tool_done",
-                name: "web_fetch",
-                detail: fetchDetail || "无摘录",
-                ok: fetchOk && aligned,
-                elapsedMs: Date.now() - fetchStarted
-              }
-            };
-          }
-        }
-        if (deskTurn.kind === "live" && searchOk) {
-          const material = [searchRaw, fetchBundle].filter(Boolean).join("\n").slice(0, 8000);
-          try {
-            const brief = await this.config.llm.completeChat(
-              [
-                { role: "system", content: WEB_BRIEF_PROMPT },
-                { role: "user", content: material || message }
-              ],
-              [],
-              { timeoutMs: 15000, enableSearch: false, purpose: "chat", sessionId: extra?.sessionId ?? body.sessionId }
-            );
-            if (brief.usage) {
-              this.config.llm.noteUsage?.("chat", brief.usage, extra?.sessionId ?? body.sessionId);
-              turnUsage = addUsage(turnUsage, brief.usage);
-            }
-            const text = (brief.content ?? "").trim();
-            if (hasLiveFactNumbers(text) && looksLikeUsableWebBrief(text)) {
-              webBody = text.slice(0, 8000);
-            }
-          } catch {
-            if (hasLiveFactNumbers(notes)) {
-              webBody = notes;
-            }
-          }
-        }
-      }
-    }
-
     const promptMessages: ChatMessage[] = [
       { role: "system", content: this.config.persona.systemPrompt },
       { role: "system", content: EMOTION_USAGE_PROMPT },
       { role: "system", content: buildIntegratePrompt({
         web,
         webBody: desk ? webBody : null,
-        webLive: web && !desk,
-        webTools: false,
+        webLive: false,
+        webTools: petCanSearch,
         webSearched: desk && webSearched,
+        webLiveFact: false,
+        forCanvas: desk,
         kbEnabled,
         kbBody,
-        kbSummarize: kbRoute.kind === "summarize"
+        kbSummarize: !desk && kbRoute.kind === "summarize",
+        noteQuestion
       }) }
     ];
-    if (web && !desk) {
-      promptMessages.push({ role: "system", content: SEARCH_USAGE_PROMPT });
+    if (petCanSearch) {
+      promptMessages.push({ role: "system", content: PET_ANSWER_PROMPT });
     }
     if (!desk && kbEnabled) {
       promptMessages.push({
@@ -320,9 +362,25 @@ export class AgentRuntime {
     if (extra?.canvasPrompt) {
       promptMessages.push({ role: "system", content: extra.canvasPrompt });
     }
-    if (desk) {
-      let canvasGuide = buildDeskCanvasPrompt(deskTurn.kind);
-      if (kbEnabled && kbRoute.kind !== "skip" && !kbBody) {
+    if (desk && searchQuestion) {
+      promptMessages.push({
+        role: "system",
+        content: `结合上下文，这一轮要查的是：${searchQuestion}`
+      });
+    }
+    if (desk && message.trim()) {
+      const chosen = await this.chooseDeskForm(deskContext, searchQuestion, webBody ?? kbBody ?? "", sessionId);
+      if (chosen.usage) {
+        turnUsage = addUsage(turnUsage, chosen.usage);
+      }
+      canvasChoice = chosen.choice;
+      // 版式示例里的 images:false 不能关掉角色卡。未显式要求时，卡片自己决定要不要查公开头像。
+      if (canvasChoice.images) {
+        updateCanvasTurn({ portraits: true });
+      }
+      modelTools = canvasChoice.canvas ? canvasTools : [];
+      let canvasGuide = buildDeskCanvasGuide(canvasChoice);
+      if (kbEnabled && kbWanted && !kbBody) {
         canvasGuide +=
           "知识库没有命中文档时：canvas_set 只写一张短 note，说明没找到匹配笔记；禁止用固有知识编造课程大纲、讲义摘要或「下一步给老师」。";
       }
@@ -338,7 +396,6 @@ export class AgentRuntime {
       content: userContentWithImages(message, images)
     });
 
-    const sessionId = extra?.sessionId ?? body.sessionId;
     let speakMessages = messages;
     let canvasPlaced = false;
     if (modelTools.length > 0) {
@@ -429,9 +486,12 @@ export class AgentRuntime {
                 canvasFailDetail = result;
               }
             }
+            if (!desk && (call.name === "web_search" || call.name === "web_fetch")) {
+              webSearched = true;
+            }
             if (!desk && call.name === "web_search" && ok) {
-              const note = humanizeSearchNotes(result);
-              if (note) {
+              const note = humanizeSearchNotes(result) || result.slice(0, 4000);
+              if (note.trim()) {
                 webBody = [webBody, note].filter(Boolean).join("\n").slice(0, 8000);
               }
             }
@@ -488,35 +548,137 @@ export class AgentRuntime {
         };
       }
     }
+    if (desk && canvasPlaced && this.config.plugins) {
+      const review = await this.reviewCanvas({
+        message: searchQuestion || message,
+        excerpt: (webBody ?? kbBody ?? "").slice(0, 1200),
+        cards: lastCanvasArguments(speakMessages),
+        sessionId
+      });
+      if (review.usage) {
+        turnUsage = addUsage(turnUsage, review.usage);
+      }
+      if (review.fix) {
+        try {
+          const pending: LlmMessage[] = [
+            ...speakMessages,
+            {
+              role: "user",
+              content: `这页没有回答老师的问题：${review.fix}。只改这些卡片后再 canvas_set。`
+            }
+          ];
+          const complete = await withTimeout(
+            this.config.llm.completeChat(pending, modelTools, {
+              timeoutMs: 0,
+              enableSearch: false,
+              sessionId
+            }),
+            0,
+            "模型规划超时"
+          );
+          if (complete.usage) {
+            this.config.llm.noteUsage?.("tool", complete.usage, sessionId);
+            turnUsage = addUsage(turnUsage, complete.usage);
+          }
+          const toolCalls = complete.toolCalls.filter((call) => call.name.startsWith("canvas_"));
+          if (toolCalls.length > 0) {
+            const assistantToolCalls = toolCalls.map((call) => ({
+              id: call.id,
+              type: "function" as const,
+              function: { name: call.name, arguments: call.argumentsJson }
+            }));
+            speakMessages = [
+              ...pending,
+              { role: "assistant", content: complete.content || null, tool_calls: assistantToolCalls }
+            ];
+            for (const call of toolCalls) {
+              if (extra?.signal?.aborted) {
+                return;
+              }
+              yield {
+                event: "progress",
+                data: {
+                  phase: "tool_start",
+                  name: call.name,
+                  detail: summarizeToolArgs(call.argumentsJson)
+                }
+              };
+              const started = Date.now();
+              const result = await withTimeout(
+                this.config.plugins.execute(call.name, parseToolArgs(call.argumentsJson)),
+                this.pluginTimeoutMs(),
+                `tool ${call.name} timeout`
+              ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
+              const ok = toolResultOk(call.name, result);
+              if (ok) {
+                canvasPlaced = true;
+              }
+              yield {
+                event: "progress",
+                data: {
+                  phase: "tool_done",
+                  name: call.name,
+                  detail: result.slice(0, 8000),
+                  ok,
+                  elapsedMs: Date.now() - started
+                }
+              };
+              speakMessages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: result
+              });
+            }
+          }
+        } catch {
+          /* 评判退回失败就保留已经落上的板 */
+        }
+      }
+    }
     if (desk && canvasPlaced) {
       speakMessages = [
         { role: "system", content: this.config.persona.systemPrompt },
         {
           role: "system",
-          content:
-            "画布已经写好。用一两句中文概括你刚查到的要点，让老师去看卡片。禁止说没有查、不用查、没法上网；老师要你上网时更要承认已经检索过。"
+          content: `画布已经写好。这一轮要查的是：${searchQuestion}。用一两句中文概括已经落到画布上的要点，让老师去看卡片。禁止说「我先查一下」。禁止说没有查、不用查、没法上网。`
         },
+        ...(body.history ?? []),
         { role: "user", content: userContentWithImages(message, images) }
       ];
-    } else if (desk && deskTurn.kind === "live") {
-      speakMessages = [
-        { role: "system", content: this.config.persona.systemPrompt },
-        {
-          role: "system",
-          content: hasLiveFactNumbers(webBody ?? "")
-            ? `检索摘录：\n${webBody}\n用一两句中文汇报其中的气温。禁止提 kind=chart、画布拒绝、工具名；禁止让老师手抄。`
-            : "检索没有可用的逐日气温数字，没有往画布落卡。用一两句中文说明这次没画成图。禁止提 kind=chart、画布拒绝、工具名；禁止让老师手抄气温或日期表。"
-        },
-        { role: "user", content: userContentWithImages(message, images) }
-      ];
+    }
+    if (!desk && webSearched) {
+      const searchedPrompt = buildIntegratePrompt({
+        web: true,
+        webBody,
+        webLive: false,
+        webTools: false,
+        webSearched: true,
+        webLiveFact: false,
+        forCanvas: false,
+        kbEnabled,
+        kbBody,
+        kbSummarize: kbRoute.kind === "summarize",
+        noteQuestion
+      });
+      speakMessages = speakMessages.flatMap((item) => {
+        if (item.role !== "system" || typeof item.content !== "string") {
+          return [item];
+        }
+        if (item.content.startsWith("资料由系统先判定")) {
+          return [{ role: "system" as const, content: searchedPrompt }];
+        }
+        if (item.content === PET_ANSWER_PROMPT) {
+          return [];
+        }
+        return [item];
+      });
     }
     yield {
       event: "progress",
       data: { phase: "think_done", elapsedMs: Date.now() - thinkStarted }
     };
 
-    const streamSearch = web && !desk;
-    const speakTimeoutMs = desk ? 45000 : 90000;
+    const speakTimeoutMs = desk ? 120000 : 90000;
     let spoke = 0;
     try {
       for await (const event of this.streamSentences(
@@ -526,7 +688,7 @@ export class AgentRuntime {
           turnUsage = addUsage(turnUsage, usage);
         },
         sessionId,
-        streamSearch,
+        false,
         speakTimeoutMs
       )) {
         if (event.event === "sentence") {
@@ -549,9 +711,9 @@ export class AgentRuntime {
                 }
               ],
               [],
-              { timeoutMs: desk ? 15000 : 18000, enableSearch: false, purpose: "chat", sessionId }
+              { timeoutMs: desk ? 45000 : 18000, enableSearch: false, purpose: "chat", sessionId }
             ),
-            desk ? 18000 : 20000,
+            desk ? 50000 : 20000,
             "补答超时"
           );
           if (rescue.usage) {
@@ -576,9 +738,7 @@ export class AgentRuntime {
             : desk && canvasPlaced
               ? "画布已经更新好了，可以直接看卡片。"
               : web && !webBody
-                ? deskTurn.kind === "live"
-                  ? "这次检索没有拿到可用的逐日气温，没法按实测画图。"
-                  : "这次网页检索没有拿到可用资料，没法按实测画图。你可以稍后再问，或换个更具体的地点和时间。"
+                ? "这次网页检索没有拿到可用资料。你可以稍后再问。"
                 : "我这边没有生成成句回复，请再试一次。";
         for await (const event of this.emitText(fallback)) {
           spoke += 1;
@@ -602,6 +762,77 @@ export class AgentRuntime {
         return;
       }
       throw error;
+    }
+  }
+
+  private async chooseDeskForm(
+    context: string,
+    question: string,
+    summary: string,
+    sessionId?: string
+  ): Promise<{ choice: DeskCanvasChoice; usage?: LlmUsage }> {
+    const fallback: DeskCanvasChoice = { canvas: true, images: false, form: "note" };
+    try {
+      const result = await withTimeout(
+        this.config.llm.completeChat(
+          [
+            { role: "system", content: DESK_FORM_PROMPT },
+            { role: "user", content: `上下文：\n${context}\n要查的问题：${question}\n总结：${summary || "无"}` }
+          ],
+          [],
+          { timeoutMs: 30000, enableSearch: false, purpose: "chat", sessionId }
+        ),
+        35000,
+        "版式超时"
+      );
+      if (result.usage) {
+        this.config.llm.noteUsage?.("chat", result.usage, sessionId);
+      }
+      const parsed = parseDeskCanvasChoice(result.content ?? "");
+      if (!parsed) {
+        return { choice: fallback, usage: result.usage };
+      }
+      if (parsed.form === "chart" && !/\d/.test(summary)) {
+        return { choice: { ...parsed, form: "note" }, usage: result.usage };
+      }
+      return { choice: parsed, usage: result.usage };
+    } catch {
+      return { choice: fallback };
+    }
+  }
+
+  private async reviewCanvas(input: {
+    message: string;
+    excerpt: string;
+    cards: string;
+    sessionId?: string;
+  }): Promise<{ fix: string | null; usage?: LlmUsage }> {
+    try {
+      const result = await withTimeout(
+        this.config.llm.completeChat(
+          [
+            { role: "system", content: DESK_CRITIC_PROMPT },
+            {
+              role: "user",
+              content: `问句：${input.message}\n摘录：${input.excerpt || "无"}\n卡片：${input.cards || "无"}`
+            }
+          ],
+          [],
+          { timeoutMs: 30000, enableSearch: false, purpose: "chat", sessionId: input.sessionId }
+        ),
+        35000,
+        "评判超时"
+      );
+      if (result.usage) {
+        this.config.llm.noteUsage?.("chat", result.usage, input.sessionId);
+      }
+      const verdict = parseDeskCritic(result.content ?? "");
+      if (!verdict || verdict.pass) {
+        return { fix: null, usage: result.usage };
+      }
+      return { fix: verdict.fix, usage: result.usage };
+    } catch {
+      return { fix: null };
     }
   }
 
@@ -767,21 +998,52 @@ function looksLikeInternalCanvasTalk(text: string): boolean {
 }
 
 function timeoutSpeakFallback(webBody: string | null): string {
-  const brief = humanizeSearchNotes(webBody ?? "");
+  const raw = (webBody ?? "").trim();
+  if (/没搜到贴合资料|没留下贴合/.test(raw)) {
+    return "这轮检索没有留下和问题贴合的资料。";
+  }
+  const brief = humanizeSearchNotes(raw);
   if (brief.length >= 24) {
     return `口播超时了，先按检索到的资料说：${brief.slice(0, 280)}`;
   }
   return "回答超时，请再试一次。";
 }
 
-function deskPriorText(history?: ChatMessage[], canvasPrompt?: string): string {
-  const chats = (history ?? [])
-    .filter((item) => item.role === "user" || item.role === "assistant")
-    .slice(-8)
-    .map((item) => item.content)
-    .join("\n");
-  const titles = [...(canvasPrompt ?? "").matchAll(/「([^」]{1,24})」/g)].map((match) => match[1]);
-  return [chats, titles.join("\n")].filter(Boolean).join("\n");
+function deskContextText(history: ChatMessage[] | undefined, message: string): string {
+  const lines: string[] = [];
+  for (const item of history ?? []) {
+    const text = item.content.replace(/\s+/g, " ").trim().slice(0, 1500);
+    if (!text) {
+      continue;
+    }
+    if (item.role === "system") {
+      lines.push(text);
+      continue;
+    }
+    if (item.role !== "user" && item.role !== "assistant") {
+      continue;
+    }
+    lines.push(`${item.role === "user" ? "老师" : "星奈"}：${text}`);
+  }
+  const current = `老师：${message.replace(/\s+/g, " ").trim()}`;
+  if (lines.at(-1) !== current) {
+    lines.push(current);
+  }
+  return lines.join("\n");
+}
+
+function lastCanvasArguments(messages: LlmMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== "assistant" || !message.tool_calls) {
+      continue;
+    }
+    const call = [...message.tool_calls].reverse().find((item) => item.function.name.startsWith("canvas_"));
+    if (call) {
+      return call.function.arguments;
+    }
+  }
+  return "";
 }
 
 function doneEvent(usage?: LlmUsage): AgentEvent {

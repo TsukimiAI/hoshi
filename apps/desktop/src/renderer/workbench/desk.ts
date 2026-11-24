@@ -1,4 +1,6 @@
 import type { DeskCanvasItem, DeskMessage, DeskSession, DeskStep, DeskTurn } from "./types.js";
+import { parseDeskMarkdown, type DeskMarkdownBlock } from "./deskMarkdown.js";
+import { packDeskCards } from "./deskLayout.js";
 import {
   currentEl,
   deskAttachRow,
@@ -15,6 +17,17 @@ import {
 } from "./ctx.js";
 
 const wb = workbenchApi;
+
+/** 与 packages/shared 的 canvasLayoutRole 一致。工作台脚本不打包 shared。 */
+function canvasLayoutRole(kind: string, payload: Record<string, unknown>): "wide" | "half" {
+  if (kind === "chart" || kind === "table") {
+    return "wide";
+  }
+  if (kind === "markdown") {
+    return String(payload.body ?? "").length > 180 ? "wide" : "half";
+  }
+  return "half";
+}
 
 function canonicalizeDeskImageUrl(raw: string): string | null {
   const source = raw.trim();
@@ -572,23 +585,170 @@ async function restoreDeskSnapshot(turnId: string): Promise<void> {
   }
 }
 
-async function reorderDeskItems(fromId: string, toId: string, before: boolean): Promise<void> {
-  if (!wb || !s.deskSessionId || fromId === toId || s.deskViewingTurnId) return;
-  const order = s.deskItems.map((item) => item.id);
-  const from = order.indexOf(fromId);
-  const to = order.indexOf(toId);
-  if (from < 0 || to < 0) return;
-  order.splice(from, 1);
-  const insertAt = order.indexOf(toId);
-  if (insertAt < 0) return;
-  order.splice(before ? insertAt : insertAt + 1, 0, fromId);
-  try {
-    const data = await wb.reorderCanvas(s.deskSessionId, order);
-    s.deskLiveItems = data.items;
-    showDeskBoard(s.deskLiveItems, false);
-  } catch (error) {
-    deskStatus.textContent = error instanceof Error ? error.message : "调整顺序失败";
+function deskItemWidth(item: DeskCanvasItem): number {
+  const wide = canvasLayoutRole(item.kind, item.payload) === "wide";
+  const floor = wide ? 560 : 300;
+  return Math.max(floor, item.w || floor);
+}
+
+function sizeDeskCanvas(layer: HTMLElement): void {
+  let width = layer.parentElement?.clientWidth ?? 0;
+  let height = layer.parentElement?.clientHeight ?? 0;
+  for (const node of Array.from(layer.querySelectorAll<HTMLElement>(".desk-item"))) {
+    width = Math.max(width, node.offsetLeft + node.offsetWidth + 24);
+    height = Math.max(height, node.offsetTop + node.offsetHeight + 24);
   }
+  layer.style.width = `${width}px`;
+  layer.style.height = `${height}px`;
+}
+
+let deskDragging = false;
+let deskLayoutObserver: ResizeObserver | null = null;
+let deskLayoutFrame = 0;
+
+function placedStorageKey(sessionId: string): string {
+  return `hoshi-desk-placed:${sessionId}`;
+}
+
+function readPlacedIds(sessionId: string): Set<string> {
+  if (!sessionId) {
+    return new Set();
+  }
+  try {
+    const raw = localStorage.getItem(placedStorageKey(sessionId));
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    if (!Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(parsed.filter((id): id is string => typeof id === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function rememberPlacedId(sessionId: string, id: string): void {
+  if (!sessionId) {
+    return;
+  }
+  const ids = readPlacedIds(sessionId);
+  ids.add(id);
+  localStorage.setItem(placedStorageKey(sessionId), JSON.stringify([...ids]));
+}
+
+function applyDeskPack(layer: HTMLElement): void {
+  if (deskDragging || !layer.isConnected) {
+    sizeDeskCanvas(layer);
+    return;
+  }
+  // 历史快照只改画面。写回会改到活板上同 id 的卡。
+  const persist = s.deskViewingTurnId == null && Boolean(s.deskSessionId);
+  const placed = persist ? readPlacedIds(s.deskSessionId) : new Set<string>();
+  const cards = s.deskItems.flatMap((item) => {
+    const el = layer.querySelector<HTMLElement>(`.desk-item[data-id="${CSS.escape(item.id)}"]`);
+    if (!el) {
+      return [];
+    }
+    return [
+      {
+        id: item.id,
+        x: item.x,
+        y: item.y,
+        w: el.offsetWidth,
+        h: el.offsetHeight,
+        placed: placed.has(item.id)
+      }
+    ];
+  });
+  const boardWidth = Math.max(layer.parentElement?.clientWidth ?? 0, 720);
+  const packed = packDeskCards(cards, boardWidth);
+  for (const next of packed) {
+    if (placed.has(next.id)) {
+      continue;
+    }
+    const item = s.deskItems.find((entry) => entry.id === next.id);
+    const el = layer.querySelector<HTMLElement>(`.desk-item[data-id="${CSS.escape(next.id)}"]`);
+    if (!item || !el || (item.x === next.x && item.y === next.y)) {
+      continue;
+    }
+    item.x = next.x;
+    item.y = next.y;
+    el.style.left = `${next.x}px`;
+    el.style.top = `${next.y}px`;
+    if (!persist) {
+      continue;
+    }
+    const live = s.deskLiveItems.find((entry) => entry.id === next.id);
+    if (live) {
+      live.x = next.x;
+      live.y = next.y;
+    }
+    void wb?.patchCanvas(next.id, { x: next.x, y: next.y }, s.deskSessionId).catch(() => undefined);
+  }
+  sizeDeskCanvas(layer);
+}
+
+function watchDeskLayout(layer: HTMLElement): void {
+  deskLayoutObserver?.disconnect();
+  deskLayoutObserver = null;
+  if (typeof ResizeObserver === "undefined") {
+    return;
+  }
+  deskLayoutObserver = new ResizeObserver(() => {
+    if (deskDragging || !layer.isConnected) {
+      return;
+    }
+    cancelAnimationFrame(deskLayoutFrame);
+    deskLayoutFrame = requestAnimationFrame(() => applyDeskPack(layer));
+  });
+  for (const card of Array.from(layer.querySelectorAll<HTMLElement>(".desk-item"))) {
+    deskLayoutObserver.observe(card);
+  }
+}
+
+function attachDeskDrag(el: HTMLElement, head: HTMLElement, item: DeskCanvasItem, layer: HTMLElement): void {
+  head.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || (event.target as HTMLElement).closest(".desk-item-del")) {
+      return;
+    }
+    event.preventDefault();
+    deskDragging = true;
+    head.setPointerCapture(event.pointerId);
+    const originX = item.x;
+    const originY = item.y;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const topZ = s.deskItems.reduce((max, entry) => Math.max(max, entry.z), 0) + 1;
+    item.z = topZ;
+    el.style.zIndex = String(topZ);
+    const move = (ev: PointerEvent): void => {
+      item.x = Math.max(0, Math.round(originX + ev.clientX - startX));
+      item.y = Math.max(0, Math.round(originY + ev.clientY - startY));
+      el.style.left = `${item.x}px`;
+      el.style.top = `${item.y}px`;
+      sizeDeskCanvas(layer);
+    };
+    const up = (): void => {
+      head.removeEventListener("pointermove", move);
+      head.removeEventListener("pointerup", up);
+      deskDragging = false;
+      if (s.deskSessionId && (item.x !== originX || item.y !== originY)) {
+        rememberPlacedId(s.deskSessionId, item.id);
+      }
+      const live = s.deskLiveItems.find((entry) => entry.id === item.id);
+      if (live) {
+        live.x = item.x;
+        live.y = item.y;
+        live.z = item.z;
+      }
+      void wb
+        ?.patchCanvas(item.id, { x: item.x, y: item.y, z: item.z }, s.deskSessionId)
+        .catch((error: unknown) => {
+          deskStatus.textContent = error instanceof Error ? error.message : "移动卡片失败";
+        });
+    };
+    head.addEventListener("pointermove", move);
+    head.addEventListener("pointerup", up);
+  });
 }
 
 function appendSafeInline(el: HTMLElement, text: string): void {
@@ -628,44 +788,41 @@ function appendSafeInline(el: HTMLElement, text: string): void {
   }
 }
 
+function renderMarkdownBlock(block: DeskMarkdownBlock): HTMLElement {
+  if (block.type === "h") {
+    const node = document.createElement(block.level === 1 ? "h3" : block.level === 2 ? "h4" : "h5");
+    appendSafeInline(node, block.text);
+    return node;
+  }
+  if (block.type === "ul" || block.type === "ol") {
+    const list = document.createElement(block.type);
+    for (const item of block.items) {
+      const li = document.createElement("li");
+      appendSafeInline(li, item);
+      list.appendChild(li);
+    }
+    return list;
+  }
+  if (block.type === "table") {
+    return renderDeskTable({ columns: block.headers, rows: block.rows });
+  }
+  if (block.type === "code") {
+    const pre = document.createElement("pre");
+    const code = document.createElement("code");
+    code.textContent = block.text;
+    pre.appendChild(code);
+    return pre;
+  }
+  const p = document.createElement("p");
+  appendSafeInline(p, block.text);
+  return p;
+}
+
 function renderSafeMarkdown(source: string): HTMLElement {
   const root = document.createElement("div");
   root.className = "desk-md";
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
-  let list: HTMLUListElement | null = null;
-  const flushList = (): void => {
-    list = null;
-  };
-  for (const line of lines) {
-    const trimmed = line.trimEnd();
-    if (!trimmed.trim()) {
-      flushList();
-      continue;
-    }
-    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
-    if (heading) {
-      flushList();
-      const level = heading[1].length;
-      const node = document.createElement(level === 1 ? "h3" : level === 2 ? "h4" : "h5");
-      appendSafeInline(node, heading[2]);
-      root.appendChild(node);
-      continue;
-    }
-    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
-    if (bullet) {
-      if (!list) {
-        list = document.createElement("ul");
-        root.appendChild(list);
-      }
-      const li = document.createElement("li");
-      appendSafeInline(li, bullet[1]);
-      list.appendChild(li);
-      continue;
-    }
-    flushList();
-    const p = document.createElement("p");
-    appendSafeInline(p, trimmed);
-    root.appendChild(p);
+  for (const block of parseDeskMarkdown(source)) {
+    root.appendChild(renderMarkdownBlock(block));
   }
   return root;
 }
@@ -709,13 +866,22 @@ function renderDeskTable(payload: Record<string, unknown>): HTMLElement {
 }
 
 export function showDeskBoard(items: DeskCanvasItem[], readonly: boolean): void {
-  s.deskItems = [...items].sort((a, b) => a.z - b.z);
+  cancelAnimationFrame(deskLayoutFrame);
+  deskLayoutObserver?.disconnect();
+  deskLayoutObserver = null;
+  s.deskItems = items.map((item) => ({ ...item })).sort((a, b) => a.z - b.z);
   deskBoardEl.classList.toggle("desk-board-readonly", readonly);
-  deskBoardEl.replaceChildren();
+  const layer = document.createElement("div");
+  layer.className = "desk-canvas";
+  deskBoardEl.replaceChildren(layer);
   for (const item of s.deskItems) {
     const el = document.createElement("article");
+    el.dataset.id = item.id;
     el.className = `desk-item${item.kind === "chart" ? " desk-item-chart" : item.kind === "card" ? " desk-item-card" : ""}`;
-    el.style.minHeight = `${Math.min(item.h, 420)}px`;
+    el.style.left = `${Math.max(0, item.x)}px`;
+    el.style.top = `${Math.max(0, item.y)}px`;
+    el.style.width = `${deskItemWidth(item)}px`;
+    el.style.zIndex = String(item.z);
     const head = document.createElement("div");
     head.className = "desk-item-head";
     const titles = document.createElement("div");
@@ -744,27 +910,7 @@ export function showDeskBoard(items: DeskCanvasItem[], readonly: boolean): void 
         void removeDeskItem(item.id);
       });
       head.append(titles, del);
-      el.draggable = true;
-      el.addEventListener("dragstart", (event) => {
-        if ((event.target as HTMLElement).closest(".desk-item-del")) {
-          event.preventDefault();
-          return;
-        }
-        event.dataTransfer?.setData("text/plain", item.id);
-        if (event.dataTransfer) {
-          event.dataTransfer.effectAllowed = "move";
-        }
-      });
-      el.addEventListener("dragover", (event) => {
-        event.preventDefault();
-      });
-      el.addEventListener("drop", (event) => {
-        event.preventDefault();
-        const fromId = event.dataTransfer?.getData("text/plain") ?? "";
-        if (!fromId) return;
-        const before = event.offsetY < el.clientHeight / 2;
-        void reorderDeskItems(fromId, item.id, before);
-      });
+      attachDeskDrag(el, head, item, layer);
     }
     const body = document.createElement("div");
     body.className = "desk-item-body";
@@ -783,7 +929,7 @@ export function showDeskBoard(items: DeskCanvasItem[], readonly: boolean): void 
         });
         body.appendChild(legend);
       }
-      body.appendChild(renderDeskChart(item.payload, 280, 220));
+      body.appendChild(renderDeskChart(item.payload, 640, 260));
       const insight = String(item.payload.insight ?? "");
       if (insight) {
         const note = document.createElement("p");
@@ -823,10 +969,7 @@ export function showDeskBoard(items: DeskCanvasItem[], readonly: boolean): void 
           body.appendChild(slot);
         }
       }
-      const text = document.createElement("p");
-      text.className = "desk-card-body";
-      text.textContent = String(item.payload.body ?? "");
-      body.appendChild(text);
+      body.appendChild(renderSafeMarkdown(String(item.payload.body ?? "")));
       const tags = Array.isArray(item.payload.tags) ? item.payload.tags.map((tag) => String(tag)) : [];
       if (tags.length) {
         const row = document.createElement("div");
@@ -840,7 +983,7 @@ export function showDeskBoard(items: DeskCanvasItem[], readonly: boolean): void 
         body.appendChild(row);
       }
     } else {
-      body.textContent = String(item.payload.body ?? "");
+      body.appendChild(renderSafeMarkdown(String(item.payload.body ?? "")));
       const tags = Array.isArray(item.payload.tags) ? item.payload.tags.map((tag) => String(tag)) : [];
       if (tags.length) {
         const row = document.createElement("div");
@@ -855,8 +998,10 @@ export function showDeskBoard(items: DeskCanvasItem[], readonly: boolean): void 
       }
     }
     el.append(head, body);
-    deskBoardEl.appendChild(el);
+    layer.appendChild(el);
   }
+  applyDeskPack(layer);
+  watchDeskLayout(layer);
 }
 
 export async function loadDeskBoard(): Promise<void> {
