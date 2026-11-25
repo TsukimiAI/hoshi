@@ -1,5 +1,5 @@
 import "./registerMediaScheme";
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session, shell, type WebContents } from "electron";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, copyFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { config as loadDotenv } from "dotenv";
@@ -13,7 +13,7 @@ import {
   upsertMcpServer,
   type McpServerConfig
 } from "@hoshi/agent";
-import { resolveHoshiSettings } from "@hoshi/shared";
+import { PET_SCREEN, petScreenIntervalMs, petScreenUnchanged, resolveHoshiSettings } from "@hoshi/shared";
 import { downloadWhisperModel, resolveWhisperVoice } from "./whisperAssets";
 import { loadHoshiSettings, saveHoshiSettings } from "./settingsStore";
 import { parseDocx } from "./docxParser";
@@ -39,7 +39,8 @@ import {
 } from "./pluginCaps";
 import { configureIsolatedExecute, isolatedPluginRun } from "./pluginExecuteHost";
 import { augmentedPath } from "./envPath";
-import { configureRemindToast, relayoutRemindToast } from "./remindToast";
+import { configureRemindToast, relayoutRemindToast, setRemindToastContentProtection } from "./remindToast";
+import { capturePetScreen, isPetScreenExcluded, reviveTransparentPetWindow, setPetScreenExcluded } from "./screenCapture";
 import { onScheduleEventsChanged, startScheduleReminders, stopScheduleReminders } from "./scheduleRemind";
 import {
   createSandboxPlugin,
@@ -98,6 +99,7 @@ async function bootstrap() {
     deepseekApiKey: process.env.HOSHI_DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY
   };
   let settings = loadHoshiSettings(userDataDir, envSeed);
+  setPetScreenExcluded(settings.screen.enabled);
   const pluginsDir = join(userDataDir, "plugins");
   const pluginStorageRoot = join(userDataDir, "plugin-storage");
   const pluginStorageDir = join(pluginStorageRoot, "live");
@@ -262,12 +264,19 @@ async function bootstrap() {
         nodeIntegration: false
       }
     });
+    settingsWindow.setContentProtection(isPetScreenExcluded());
     settingsWindow.on("closed", () => {
       settingsWindow = null;
     });
     await settingsWindow.loadFile(join(__dirname, "../renderer/settings.html"));
     settingsWindow.show();
     settingsWindow.focus();
+  };
+
+  const pokePetMouse = (): void => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("hoshi:pet-mouse-reset");
+    }
   };
 
   const parkPet = (): void => {
@@ -279,6 +288,7 @@ async function bootstrap() {
     mainWindow.showInactive();
     mainWindow.setAlwaysOnTop(true, "floating");
     mainWindow.setIgnoreMouseEvents(true, { forward: true });
+    pokePetMouse();
   };
 
   const restorePet = (): void => {
@@ -290,6 +300,7 @@ async function bootstrap() {
     mainWindow.show();
     mainWindow.setAlwaysOnTop(true, "floating");
     mainWindow.setIgnoreMouseEvents(true, { forward: true });
+    pokePetMouse();
   };
 
   let themePreview: { bg: string; font: string; dialog: string; menu: string } | null = null;
@@ -352,6 +363,15 @@ async function bootstrap() {
     parkPet();
   };
 
+  ipcMain.handle("hoshi:pet-screen-limits", () => ({
+    intervalMs: petScreenIntervalMs(),
+    cooldownMs: PET_SCREEN.cooldownMs
+  }));
+
+  ipcMain.handle("hoshi:pet-screen-unchanged", (_event, prev: unknown, next: unknown) =>
+    petScreenUnchanged(String(prev ?? ""), String(next ?? ""))
+  );
+
   ipcMain.handle("hoshi:get-config", () => ({
     agentBaseUrl,
     agentToken: authToken,
@@ -372,6 +392,7 @@ async function bootstrap() {
       }
     }
     saveHoshiSettings(userDataDir, settings);
+    applyPetScreenExclusion(settings.screen.enabled);
     applySettings({ ...settings, voice: resolveWhisperVoice(settings.voice) });
     pushSettings();
     return settings;
@@ -810,9 +831,47 @@ async function bootstrap() {
     openAppBox(pluginsDir, settings.plugins.enabled);
   });
 
+  const petSender = (sender: WebContents): boolean =>
+    Boolean(mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents);
+
+  const applyPetScreenExclusion = (on: boolean): void => {
+    setPetScreenExcluded(on);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setContentProtection(on);
+      reviveTransparentPetWindow(mainWindow);
+    }
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      settingsWindow.setContentProtection(on);
+    }
+    setRemindToastContentProtection(on);
+  };
+
+  ipcMain.handle("hoshi:set-screen-excluded", (event, on: unknown) => {
+    if (!petSender(event.sender)) {
+      return { ok: false as const };
+    }
+    applyPetScreenExclusion(on === true);
+    return { ok: true as const };
+  });
+
+  ipcMain.handle("hoshi:capture-screen", async (event) => {
+    if (!petSender(event.sender) || !mainWindow) {
+      return { ok: false as const, reason: "failed" as const };
+    }
+    const shot = await capturePetScreen(mainWindow);
+    reviveTransparentPetWindow(mainWindow);
+    return shot;
+  });
+
   ipcMain.handle("hoshi:set-ignore-mouse-events", (_event, ignore: boolean) => {
-    if (!mainWindow) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       return;
+    }
+    const workbenchOpen = Boolean(workbenchWindow && !workbenchWindow.isDestroyed());
+    if (!ignore) {
+      mainWindow.setFocusable(true);
+    } else if (workbenchOpen && !mainWindow.isFocused()) {
+      mainWindow.setFocusable(false);
     }
     mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
   });
@@ -850,10 +909,13 @@ async function bootstrap() {
       backgroundThrottling: false
     }
   });
+  mainWindow.setContentProtection(isPetScreenExcluded());
+  reviveTransparentPetWindow(mainWindow);
   mainWindow.webContents.setBackgroundThrottling(false);
   mainWindow.webContents.setAudioMuted(false);
 
   await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+  reviveTransparentPetWindow(mainWindow);
   mainWindow.setIgnoreMouseEvents(true, { forward: true });
   startScheduleReminders({
     storageDir: pluginStorageDir

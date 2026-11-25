@@ -1,3 +1,36 @@
+const CHAT_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+const CHAT_IMAGE_MAX_BYTES = 1_350_000;
+const CHAT_IMAGE_MAX_DATA_CHARS = 1_800_000;
+
+function normalizePetMime(mime: string): string {
+  const value = mime.trim().toLowerCase();
+  return value === "image/jpg" ? "image/jpeg" : value;
+}
+
+async function readPetImage(
+  file: File
+): Promise<{ mime: string; data: string; preview: string } | { error: string }> {
+  const mime = normalizePetMime(file.type);
+  if (!CHAT_IMAGE_MIMES.has(mime)) {
+    return { error: "只支持 png、jpeg、webp、gif" };
+  }
+  if (file.size > CHAT_IMAGE_MAX_BYTES) {
+    return { error: "单张图片太大" };
+  }
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error("读图失败"));
+    reader.readAsDataURL(file);
+  });
+  const comma = dataUrl.indexOf(",");
+  const data = dataUrl.slice(comma + 1).replace(/\s+/g, "");
+  if (!data || data.length > CHAT_IMAGE_MAX_DATA_CHARS) {
+    return { error: "单张图片太大" };
+  }
+  return { mime, data, preview: dataUrl };
+}
+
 async function bootstrap() {
   const pet = document.getElementById("pet") as HTMLImageElement;
   const petAnchor = document.getElementById("pet-anchor") as HTMLButtonElement;
@@ -14,6 +47,9 @@ async function bootstrap() {
   const replies = document.getElementById("replies") as HTMLDivElement;
   const form = document.getElementById("chat-form") as HTMLFormElement;
   const input = document.getElementById("chat-input") as HTMLInputElement;
+  const petFile = document.getElementById("pet-file") as HTMLInputElement;
+  const petAttachBtn = document.getElementById("pet-attach-btn") as HTMLButtonElement;
+  const petAttachRow = document.getElementById("pet-attach-row") as HTMLDivElement;
   const status = document.getElementById("status") as HTMLSpanElement;
   const statusRow = document.getElementById("status-row") as HTMLDivElement;
   const sendBtn = document.getElementById("send-btn") as HTMLButtonElement;
@@ -23,6 +59,7 @@ async function bootstrap() {
   const soundPlay = document.getElementById("sound-play") as HTMLButtonElement;
   const soundVol = document.getElementById("sound-vol") as HTMLInputElement;
   const hoshi = (window as Window & { hoshi?: HoshiApi }).hoshi;
+  const pendingImages: Array<{ mime: string; data: string; preview: string }> = [];
 
   if (!hoshi) {
     status.textContent = "错误: preload 未就绪";
@@ -74,8 +111,16 @@ async function bootstrap() {
       soundBar.hidden = true;
     }
   };
-  await paintTheme();
-  await loadThemeSound();
+    try {
+      await paintTheme();
+    } catch {
+      /* 主题失败不影响立绘 */
+    }
+    try {
+      await loadThemeSound();
+    } catch {
+      /* 音效失败不影响立绘 */
+    }
   try {
     const vol = (await hoshi.getSettings()).presentation?.soundVolume;
     if (typeof vol === "number" && Number.isFinite(vol)) {
@@ -124,6 +169,7 @@ async function bootstrap() {
     if (voice) {
       ttsEnabled = voice.ttsEnabled !== false;
     }
+    syncPetScreen(next.screen?.enabled === true);
   });
   hoshi.onThemePreview?.((tokens) => {
     if (tokens) {
@@ -154,7 +200,9 @@ async function bootstrap() {
   };
   let activeRunId = 0;
   const FADE_ANIMATION_MS = 1800;
-  let currentIgnoreMouse = true;
+  let currentIgnoreMouse: boolean | null = true;
+  let lastMouseX = -1;
+  let lastMouseY = -1;
   let activePointerId: number | null = null;
   let activePointerCanToggle = false;
   let dragMoved = false;
@@ -183,6 +231,18 @@ async function bootstrap() {
     chunks: Float32Array[];
     maxTimer: number;
   } | null = null;
+  let screenEnabled = false;
+  let screenArm: number | null = null;
+  let screenTimer: number | null = null;
+  let screenCaptureBusy = false;
+  let screenMemory = { sessionId: "", hash: "" };
+  let screenSpokenAt = 0;
+  let petLimits: { intervalMs: number; cooldownMs: number } | null = null;
+  let glanceBusy = false;
+  let glanceEpoch = 0;
+  let glanceRunId = 0;
+  let glanceOwnsTts = false;
+  let ttsSocketGen = 0;
 
   const setIgnoreMouse = (ignore: boolean): void => {
     if (currentIgnoreMouse === ignore) {
@@ -190,6 +250,14 @@ async function bootstrap() {
     }
     currentIgnoreMouse = ignore;
     void hoshi.setIgnoreMouseEvents(ignore);
+  };
+  const syncMouseIgnore = (): void => {
+    currentIgnoreMouse = null;
+    if (lastMouseX < 0 || lastMouseY < 0) {
+      setIgnoreMouse(true);
+      return;
+    }
+    updateMouseIgnoreByTarget(document.elementFromPoint(lastMouseX, lastMouseY));
   };
 
   const clearFadeTimer = (): void => {
@@ -392,17 +460,20 @@ async function bootstrap() {
     setIgnoreMouse(true);
   };
   const openSession = async (sessionId: string): Promise<void> => {
+    dropPetGlance();
     sessionsState.activeId = sessionId;
     renderSessions();
     clearFadeTimer();
     replies.innerHTML = "";
+    pendingImages.splice(0, pendingImages.length);
+    paintPetAttach();
     try {
       const detail = await hoshi.listSessionMessages(sessionId);
       const lastAssistant = detail.messages
         .filter((msg) => msg.role === "assistant")
         .slice(-3);
       for (const message of lastAssistant) {
-        appendStaticBubble(replies, message.content);
+        appendStaticBubble(replies, stripVisibleEmotionMarks(message.content));
       }
       status.textContent = "就绪";
       showChatPanel();
@@ -429,6 +500,7 @@ async function bootstrap() {
                 await hoshi.deleteSession(session.id);
                 const wasActive = sessionsState.activeId === session.id;
                 if (wasActive) {
+                  dropPetGlance();
                   sessionsState.activeId = "";
                   replies.innerHTML = "";
                 }
@@ -518,6 +590,7 @@ async function bootstrap() {
   newSessionBtn.addEventListener("click", async () => {
     try {
       const created = await hoshi.createSession("新会话");
+      dropPetGlance();
       sessionsState.activeId = created.id;
       await refreshSessions();
       replies.innerHTML = "";
@@ -529,7 +602,24 @@ async function bootstrap() {
   });
 
   document.addEventListener("mousemove", (event) => {
+    lastMouseX = event.clientX;
+    lastMouseY = event.clientY;
     updateMouseIgnoreByTarget(event.target);
+  });
+  document.addEventListener("mouseout", (event) => {
+    if (event.relatedTarget) {
+      return;
+    }
+    lastMouseX = -1;
+    lastMouseY = -1;
+    setIgnoreMouse(true);
+  });
+  hoshi.onPetMouseReset(() => {
+    syncMouseIgnore();
+  });
+  form.addEventListener("pointerdown", () => {
+    setIgnoreMouse(false);
+    window.setTimeout(() => input.focus(), 0);
   });
 
   petAnchor.addEventListener("pointerdown", (event) => {
@@ -968,49 +1058,6 @@ async function bootstrap() {
     void finalizeDoneIfReady(typewriterState.sessionId);
   };
 
-  const appendCitations = (citations: Array<{ chunkId: string; documentTitle: string; snippet: string }>): void => {
-    if (citations.length === 0) {
-      return;
-    }
-    const el = document.createElement("div");
-    el.className = "citations";
-    citations.forEach((citation, index) => {
-      const chip = document.createElement("span");
-      chip.className = "citation-chip";
-      chip.title = citation.snippet;
-      const label = document.createElement("span");
-      label.className = "citation-label";
-      label.textContent = `[${index + 1}] ${citation.documentTitle}`;
-      chip.appendChild(label);
-      if (typeof hoshi?.rememberKbChunk === "function") {
-        const remember = document.createElement("button");
-        remember.type = "button";
-        remember.className = "citation-remember";
-        remember.textContent = "记住";
-        remember.title = "摘录进记忆";
-        remember.addEventListener("click", () => {
-          void (async () => {
-            try {
-              await hoshi.rememberKbChunk!(citation.chunkId);
-              remember.textContent = "已记住 ✓";
-              remember.disabled = true;
-            } catch {
-              remember.textContent = "失败";
-              window.setTimeout(() => {
-                remember.textContent = "记住";
-                remember.disabled = false;
-              }, 1500);
-            }
-          })();
-        });
-        chip.appendChild(remember);
-      }
-      el.appendChild(chip);
-    });
-    replies.appendChild(el);
-    replies.scrollTop = replies.scrollHeight;
-  };
-
   const feedLiveEvent = (event: AgentEvent): void => {
     consumeEvent(event, {
       onSentence: ({ text, emotion }) => {
@@ -1028,9 +1075,6 @@ async function bootstrap() {
       },
       onError: (msg) => {
         status.textContent = `实时: ${msg}`;
-      },
-      onCitation: (citations) => {
-        appendCitations(citations);
       }
     });
   };
@@ -1185,6 +1229,7 @@ async function bootstrap() {
       await stopLive();
       return;
     }
+    dropPetGlance();
     pttSetupGen += 1;
     await stopMicGraph();
     showChatPanel();
@@ -1217,6 +1262,7 @@ async function bootstrap() {
     if (pttBusy || sendBtn.disabled || pttPointerId !== null) {
       return;
     }
+    dropPetGlance();
     if (liveActive) {
       await stopLive();
     }
@@ -1305,9 +1351,27 @@ async function bootstrap() {
     void startLive();
   });
 
-  await setPetEmotion(hoshi, pet, config.defaultEmotion, spriteCache);
+  try {
+    await setPetEmotion(hoshi, pet, config.defaultEmotion, spriteCache);
+  } catch {
+    status.textContent = "错误: 立绘加载失败";
+    dock.classList.remove("dock-hidden");
+  }
+  let spriteRetried = false;
   pet.onerror = () => {
-    status.textContent = `错误: 立绘加载失败(${pet.alt})`;
+    if (spriteRetried) {
+      status.textContent = `错误: 立绘加载失败(${pet.alt})`;
+      dock.classList.remove("dock-hidden");
+      return;
+    }
+    spriteRetried = true;
+    spriteCache.delete(config.defaultEmotion);
+    window.setTimeout(() => {
+      void setPetEmotion(hoshi, pet, config.defaultEmotion, spriteCache).catch(() => {
+        status.textContent = "错误: 立绘加载失败";
+        dock.classList.remove("dock-hidden");
+      });
+    }, 80);
   };
   status.textContent = "就绪";
   hideDock(dock);
@@ -1325,6 +1389,8 @@ async function bootstrap() {
   }
 
   const attachTtsSocket = (): Promise<void> => {
+    ttsSocketGen += 1;
+    const socketGen = ttsSocketGen;
     if (pttTtsWs) {
       pttTtsWs.close();
       pttTtsWs = null;
@@ -1333,6 +1399,9 @@ async function bootstrap() {
     socket.binaryType = "arraybuffer";
     pttTtsWs = socket;
     socket.addEventListener("message", (event) => {
+      if (socketGen !== ttsSocketGen) {
+        return;
+      }
       if (event.data instanceof ArrayBuffer) {
         playLivePcm(new Uint8Array(event.data));
         return;
@@ -1368,9 +1437,64 @@ async function bootstrap() {
     });
   };
 
-  const runAssistantTurn = async (message: string, speak: boolean, focusInput: boolean): Promise<void> => {
+  const paintPetAttach = (): void => {
+    petAttachRow.hidden = pendingImages.length === 0;
+    petAttachRow.replaceChildren();
+    pendingImages.forEach((image, index) => {
+      const wrap = document.createElement("span");
+      wrap.className = "pet-thumb-wrap";
+      const img = document.createElement("img");
+      img.className = "pet-thumb";
+      img.src = image.preview;
+      img.alt = "附件";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "pet-thumb-remove";
+      remove.textContent = "×";
+      remove.title = "移除";
+      remove.addEventListener("click", () => {
+        pendingImages.splice(index, 1);
+        paintPetAttach();
+      });
+      wrap.append(img, remove);
+      petAttachRow.appendChild(wrap);
+    });
+  };
+
+  const addPetFiles = async (files: FileList | File[]): Promise<void> => {
+    let rejected = "";
+    for (const file of Array.from(files)) {
+      if (pendingImages.length >= 4) {
+        rejected = "最多 4 张图片";
+        break;
+      }
+      let read: { mime: string; data: string; preview: string } | { error: string };
+      try {
+        read = await readPetImage(file);
+      } catch {
+        rejected = "读图失败";
+        continue;
+      }
+      if ("error" in read) {
+        rejected = read.error;
+        continue;
+      }
+      pendingImages.push(read);
+    }
+    paintPetAttach();
+    if (rejected) {
+      status.textContent = rejected;
+    }
+  };
+
+  const runAssistantTurn = async (
+    message: string,
+    images: Array<{ mime: string; data: string }>,
+    speak: boolean,
+    focusInput: boolean
+  ): Promise<void> => {
     const trimmed = message.trim();
-    if (!trimmed) {
+    if (!trimmed && images.length === 0) {
       return;
     }
     unlockTtsCtx();
@@ -1404,7 +1528,7 @@ async function bootstrap() {
         openedTts = true;
         await attachTtsSocket();
       }
-      await hoshi.chat({ message: trimmed, sessionId }, (event: AgentEvent) => {
+      await hoshi.chat({ message: trimmed, sessionId, images }, (event: AgentEvent) => {
         consumeEvent(event, {
           onSentence: ({ text, emotion }) => {
             clearFadeTimer();
@@ -1438,9 +1562,6 @@ async function bootstrap() {
               pttTtsWs?.close();
               pttTtsWs = null;
             }
-          },
-          onCitation: (citations) => {
-            appendCitations(citations);
           }
         });
       });
@@ -1461,8 +1582,9 @@ async function bootstrap() {
 
   form.addEventListener("submit", async (evt) => {
     evt.preventDefault();
+    dropPetGlance();
     const message = input.value.trim();
-    if (!message) {
+    if (!message && pendingImages.length === 0) {
       return;
     }
     const shouldSpeak =
@@ -1470,9 +1592,371 @@ async function bootstrap() {
       ((await hoshi.getSettings()) as { voice?: { ttsEnabled?: boolean } }).voice?.ttsEnabled !==
         false;
     pttSpeakNext = false;
+    const images = pendingImages.map(({ mime, data }) => ({ mime, data }));
     input.value = "";
-    await runAssistantTurn(message, shouldSpeak, true);
+    pendingImages.splice(0, pendingImages.length);
+    paintPetAttach();
+    await runAssistantTurn(message, images, shouldSpeak, true);
   });
+
+  petAttachBtn.addEventListener("click", () => {
+    petFile.click();
+  });
+  petFile.addEventListener("change", () => {
+    if (petFile.files) void addPetFiles(petFile.files);
+    petFile.value = "";
+  });
+  input.addEventListener("paste", (event) => {
+    const files = event.clipboardData?.files;
+    if (files && files.length) {
+      event.preventDefault();
+      void addPetFiles(files);
+    }
+  });
+  let fileDragDepth = 0;
+  const draggingFiles = (event: DragEvent): boolean =>
+    Boolean(event.dataTransfer?.types.includes("Files"));
+  const clearFileDrag = (): void => {
+    fileDragDepth = 0;
+    dock.classList.remove("is-file-drop");
+  };
+  dock.addEventListener("dragenter", (event) => {
+    if (!isChatVisible() || !draggingFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    fileDragDepth += 1;
+    dock.classList.add("is-file-drop");
+    setIgnoreMouse(false);
+  });
+  dock.addEventListener("dragover", (event) => {
+    if (!isChatVisible() || !draggingFiles(event)) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+    dock.classList.add("is-file-drop");
+  });
+  dock.addEventListener("dragleave", (event) => {
+    if (!draggingFiles(event)) {
+      return;
+    }
+    fileDragDepth = Math.max(0, fileDragDepth - 1);
+    if (fileDragDepth === 0) {
+      dock.classList.remove("is-file-drop");
+    }
+  });
+  dock.addEventListener("drop", (event) => {
+    const files = event.dataTransfer?.files;
+    clearFileDrag();
+    if (!isChatVisible() || !files || files.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    void addPetFiles(files);
+  });
+  window.addEventListener("dragend", () => {
+    clearFileDrag();
+  });
+
+  function repairPetSprite(): void {
+    if (!hoshi) {
+      return;
+    }
+    if (pet.alt !== "pet" && pet.complete && pet.naturalWidth > 0) {
+      return;
+    }
+    const emotion = (pet.alt && pet.alt !== "pet" ? pet.alt : config.defaultEmotion) as Emotion;
+    spriteCache.delete(emotion);
+    void setPetEmotion(hoshi, pet, emotion, spriteCache).catch(() => undefined);
+  }
+
+  function screenMaySetStatus(): boolean {
+    return !sendBtn.disabled && !pttBusy && pttPointerId === null && !pttRecording && !pttFinishing && !liveActive;
+  }
+
+  function stopScreenLoop(): void {
+    if (screenArm !== null) {
+      window.clearTimeout(screenArm);
+      screenArm = null;
+    }
+    if (screenTimer !== null) {
+      window.clearInterval(screenTimer);
+      screenTimer = null;
+    }
+  }
+
+  function dropPetGlance(): void {
+    if (!hoshi) {
+      return;
+    }
+    glanceEpoch += 1;
+    glanceBusy = false;
+    hoshi.abortGlance();
+    if (glanceRunId !== 0 && typewriterState.sessionId === glanceRunId) {
+      activeRunId += 1;
+      typewriterState.sessionId = activeRunId;
+      typewriterState.queue = [];
+      typewriterState.doneReceived = false;
+      glanceRunId = 0;
+    }
+    if (glanceOwnsTts) {
+      glanceOwnsTts = false;
+      ttsSocketGen += 1;
+      pttTtsWs?.close();
+      pttTtsWs = null;
+      ttsAwaiting = false;
+    }
+  }
+
+  function openGlanceDock(): void {
+    state.panelOpen = true;
+    retractFanMenu();
+    openDock(dock);
+    sessionPanel.classList.add("hidden");
+    setChatAreaVisible(true);
+    clearFadeTimer();
+    clearPanelIdleCloseTimer();
+  }
+
+  async function speakGlance(sessionId: string): Promise<void> {
+    if (!hoshi) {
+      return;
+    }
+    glanceEpoch += 1;
+    const epoch = glanceEpoch;
+    glanceBusy = true;
+    let spoke = false;
+    let runId = 0;
+    const pendingSpeak: string[] = [];
+    let ttsReady = false;
+    let ttsOpening: Promise<void> | null = null;
+    const sendSpeak = (text: string): void => {
+      if (pttTtsWs && pttTtsWs.readyState === WebSocket.OPEN) {
+        pttTtsWs.send(JSON.stringify({ type: "speak", text }));
+      }
+    };
+    const ensureGlanceTts = (): Promise<void> => {
+      if (!ttsEnabled) {
+        return Promise.resolve();
+      }
+      if (!ttsOpening) {
+        glanceOwnsTts = true;
+        ttsAwaiting = true;
+        ttsOpening = attachTtsSocket()
+          .then(() => {
+            if (epoch !== glanceEpoch) {
+              return;
+            }
+            ttsReady = true;
+            for (const text of pendingSpeak.splice(0, pendingSpeak.length)) {
+              sendSpeak(text);
+            }
+          })
+          .catch(() => {
+            if (epoch !== glanceEpoch) {
+              return;
+            }
+            glanceOwnsTts = false;
+            ttsAwaiting = false;
+          });
+      }
+      return ttsOpening;
+    };
+    try {
+      await hoshi.glance(sessionId, (event) => {
+        if (epoch !== glanceEpoch) {
+          return;
+        }
+        consumeEvent(event, {
+          onSentence: ({ text, emotion }) => {
+            if (!spoke) {
+              spoke = true;
+              screenSpokenAt = notePetScreenSpoken(screenSpokenAt, true, Date.now());
+              openGlanceDock();
+              activeRunId += 1;
+              runId = activeRunId;
+              glanceRunId = runId;
+              typewriterState.sessionId = runId;
+              typewriterState.doneReceived = false;
+              typewriterState.queue = [];
+            }
+            clearFadeTimer();
+            typewriterState.queue.push({ text, emotion });
+            void processTypewriterQueue(runId);
+            if (!ttsEnabled) {
+              return;
+            }
+            if (ttsReady) {
+              sendSpeak(text);
+              return;
+            }
+            pendingSpeak.push(text);
+            void ensureGlanceTts();
+          },
+          onEmotion: (emotion) => {
+            void setPetEmotion(hoshi, pet, emotion, spriteCache);
+          },
+          onDone: () => {
+            if (!spoke) {
+              return;
+            }
+            typewriterState.doneReceived = true;
+            void finalizeDoneIfReady(runId);
+            if (!ttsEnabled) {
+              return;
+            }
+            void ensureGlanceTts().then(() => {
+              if (epoch !== glanceEpoch || !pttTtsWs || pttTtsWs.readyState !== WebSocket.OPEN) {
+                return;
+              }
+              pttTtsWs.send(JSON.stringify({ type: "finish" }));
+            });
+          },
+          onError: (message) => {
+            if (screenMaySetStatus()) {
+              status.textContent = message;
+            }
+            if (glanceOwnsTts) {
+              glanceOwnsTts = false;
+              ttsSocketGen += 1;
+              pttTtsWs?.close();
+              pttTtsWs = null;
+              ttsAwaiting = false;
+            }
+          }
+        });
+      });
+    } catch (error) {
+      const aborted = error instanceof Error && error.name === "AbortError";
+      if (epoch !== glanceEpoch || aborted) {
+        return;
+      }
+      if (screenMaySetStatus()) {
+        status.textContent = error instanceof Error ? error.message : "看桌面失败";
+      }
+    } finally {
+      if (epoch === glanceEpoch) {
+        glanceBusy = false;
+      }
+    }
+  }
+
+  async function runScreenTick(): Promise<void> {
+    if (!hoshi || !screenEnabled || screenCaptureBusy) {
+      return;
+    }
+    screenCaptureBusy = true;
+    let glanceSession = "";
+    let wantGlance = false;
+    try {
+      let shot: Awaited<ReturnType<HoshiApi["captureScreen"]>>;
+      try {
+        shot = await hoshi.captureScreen();
+      } catch {
+        shot = { ok: false, reason: "failed" };
+      }
+      repairPetSprite();
+      const sessionId = await ensureSession();
+      const limits = await hoshi.petScreenLimits();
+      petLimits = limits;
+      const pictureSame =
+        shot.ok && screenMemory.hash !== ""
+          ? await hoshi.petScreenUnchanged(screenMemory.hash, shot.hash)
+          : false;
+      const plan = planPetScreenTick({
+        enabled: screenEnabled,
+        shot,
+        sessionId,
+        lastSessionId: screenMemory.sessionId,
+        lastHash: screenMemory.hash,
+        unchanged: () => pictureSame,
+        now: Date.now(),
+        lastSpokenAt: screenSpokenAt,
+        cooldownMs: limits.cooldownMs,
+        busy: {
+          live: liveActive,
+          holding: pttBusy || pttFinishing || pttPointerId !== null || pttRecording !== null,
+          draft: input.value.trim().length > 0,
+          generating: sendBtn.disabled,
+          typing: typewriterState.running || typewriterState.queue.length > 0,
+          speaking: ttsAwaiting,
+          glancing: glanceBusy
+        }
+      });
+      if (shot.ok && screenMaySetStatus() && isPetScreenFailureText(status.textContent)) {
+        status.textContent = "就绪";
+      } else if (plan.status && screenMaySetStatus()) {
+        status.textContent = plan.status;
+      }
+      if (plan.upload && shot.ok) {
+        try {
+          await hoshi.putPetScreen({
+            sessionId,
+            mime: shot.mime,
+            data: shot.data,
+            hash: shot.hash
+          });
+          screenMemory = commitPetScreenUpload(screenMemory, { ok: true, sessionId, hash: shot.hash });
+        } catch {
+          return;
+        }
+      }
+      wantGlance = plan.glance;
+      glanceSession = sessionId;
+    } finally {
+      screenCaptureBusy = false;
+    }
+    if (wantGlance && screenEnabled && !glanceBusy) {
+      await speakGlance(glanceSession);
+    }
+  }
+
+  function armScreenLoop(): void {
+    if (!hoshi) {
+      return;
+    }
+    stopScreenLoop();
+    void hoshi.setScreenExcluded(true).then(() => {
+      repairPetSprite();
+    });
+    screenArm = window.setTimeout(() => {
+      void (async () => {
+        screenArm = null;
+        if (!screenEnabled || !hoshi) {
+          return;
+        }
+        const limits = petLimits ?? (await hoshi.petScreenLimits());
+        petLimits = limits;
+        void runScreenTick();
+        screenTimer = window.setInterval(() => {
+          void runScreenTick();
+        }, limits.intervalMs);
+      })();
+    }, 300);
+  }
+
+  function syncPetScreen(enabled: boolean): void {
+    if (enabled) {
+      if (screenEnabled && (screenTimer !== null || screenArm !== null)) {
+        return;
+      }
+      screenEnabled = true;
+      armScreenLoop();
+      return;
+    }
+    screenEnabled = false;
+    stopScreenLoop();
+    dropPetGlance();
+  }
+
+  try {
+    syncPetScreen((await hoshi.getSettings()).screen.enabled === true);
+  } catch {
+    syncPetScreen(false);
+  }
 
   input.addEventListener("input", () => {
     resetPanelIdleCloseTimer();

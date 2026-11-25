@@ -97,6 +97,7 @@ interface HoshiSettings {
     compactKeepRecent: number;
   };
   presentation: PresentationConfig;
+  screen: { enabled: boolean };
 }
 
 interface HoshiApi {
@@ -118,6 +119,7 @@ interface HoshiApi {
   openAppBox: () => Promise<void>;
   onPluginPanel: (handler: (open: boolean, width: number) => void) => void;
   setIgnoreMouseEvents: (ignore: boolean) => Promise<void>;
+  onPetMouseReset: (handler: () => void) => void;
   moveWindowBy: (dx: number, dy: number) => Promise<void>;
   openSettings: () => Promise<void>;
   openWorkbench: () => Promise<void>;
@@ -134,6 +136,21 @@ interface HoshiApi {
     onEvent: (event: AgentEvent) => void
   ) => Promise<void>;
   abortChat?: () => void;
+  captureScreen: () => Promise<
+    | { ok: true; mime: "image/jpeg"; data: string; hash: string }
+    | { ok: false; reason: "denied" | "restricted" | "no-source" | "failed" }
+  >;
+  setScreenExcluded: (on: boolean) => Promise<{ ok: boolean }>;
+  putPetScreen: (payload: {
+    sessionId: string;
+    mime: string;
+    data: string;
+    hash: string;
+  }) => Promise<{ ok: true; stored: boolean }>;
+  glance: (sessionId: string, onEvent: (event: AgentEvent) => void) => Promise<void>;
+  abortGlance: () => void;
+  petScreenLimits: () => Promise<{ intervalMs: number; cooldownMs: number }>;
+  petScreenUnchanged: (prev: string, next: string) => Promise<boolean>;
   listSessions: (kind?: "chat" | "desk") => Promise<SessionItem[]>;
   createSession: (title?: string, kind?: "chat" | "desk") => Promise<SessionItem>;
   deleteSession: (sessionId: string) => Promise<void>;
@@ -206,6 +223,33 @@ async function setPetEmotion(
   }
 }
 
+const VISIBLE_EMOTION_ID =
+  "shy-and-indignation|very-happy|very-like|normal|happy|like|sad|angry|shy|shock|doubt|confused|expect|wry|disdain|resist|resentment|yandere";
+
+function stripVisibleEmotionMarks(text: string): string {
+  const spans: string[] = [];
+  const held = text.replace(/`[^`\n]+`/g, (span) => {
+    spans.push(span);
+    return `\uE000${spans.length - 1}\uE001`;
+  });
+  const wrapped = new RegExp(
+    `[（(【\\[「『［〖〈]\\s*(?:${VISIBLE_EMOTION_ID})\\s*[）)】\\]」』］〗〉]`,
+    "gi"
+  );
+  const tilde = new RegExp(`[～~]\\s*(?:${VISIBLE_EMOTION_ID})(?![A-Za-z-])`, "gi");
+  const cleaned = held
+    .replace(/⟦[^⟧]{0,48}⟧/g, "")
+    .replace(tilde, "")
+    .replace(wrapped, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([。！？，、])/g, "$1")
+    .trim();
+  return cleaned.replace(/\uE000(\d+)\uE001/g, (all, index: string) => spans[Number(index)] ?? all);
+}
+
+(globalThis as unknown as { stripVisibleEmotionMarks: typeof stripVisibleEmotionMarks }).stripVisibleEmotionMarks =
+  stripVisibleEmotionMarks;
+
 function consumeEvent(
   event: AgentEvent,
   handlers: {
@@ -217,7 +261,12 @@ function consumeEvent(
   }
 ): void {
   if (event.event === "sentence") {
-    handlers.onSentence({ text: event.data.text, emotion: event.data.emotion });
+    const text = stripVisibleEmotionMarks(event.data.text);
+    if (!text) {
+      handlers.onEmotion(event.data.emotion);
+      return;
+    }
+    handlers.onSentence({ text, emotion: event.data.emotion });
     return;
   }
   if (event.event === "emotion") {
@@ -305,6 +354,10 @@ function appendTypingChar(bubble: HTMLDivElement, char: string): void {
   span.className = "reply-char-pop";
   span.textContent = char;
   bubble.appendChild(span);
+  const replies = bubble.parentElement;
+  if (replies) {
+    replies.scrollTop = replies.scrollHeight;
+  }
 }
 
 function appendStaticBubble(replies: HTMLDivElement, text: string): void {

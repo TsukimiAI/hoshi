@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canvasLayoutRole } from "@hoshi/shared";
-import { buildDeskCanvasGuide, buildIntegratePrompt, classifyDeskTurn, composeTurnHint, extractDeskTopic, extractPortraitName, extractPortraitNames, knowledgeHitLooksEmpty, knowledgeRoute, knowledgeSearchQuery, looksLikeCompareQuery, looksLikePersonQuery, looksLikeUsableWebBrief, looksLikeWorkQuery, parseDeskCanvasChoice, parseDeskCritic, portraitLookupQuery, shouldAttachIllustration } from "./plan";
+import { buildDeskCanvasGuide, buildIntegratePrompt, classifyDeskTurn, composeTurnHint, extractDeskTopic, extractPortraitName, extractPortraitNames, imageTurnRetrieval, knowledgeHitLooksEmpty, knowledgeRoute, knowledgeSearchQuery, looksLikeCompareQuery, looksLikePersonQuery, looksLikeUsableWebBrief, looksLikeWorkQuery, parseDeskCanvasChoice, parseDeskCritic, portraitLookupQuery, shouldAttachIllustration } from "./plan";
 
 describe("desk turn", () => {
   it("天气和比赛是时效题，不进知识库", () => {
@@ -10,6 +10,17 @@ describe("desk turn", () => {
     expect(knowledgeRoute("昨晚那场比赛谁赢了").kind).toBe("skip");
     expect(knowledgeRoute("本月上海天气").kind).toBe("skip");
     expect(knowledgeRoute("你好").kind).toBe("skip");
+  });
+
+  it("看图问画面时不查知识库，问海报或笔记时仍检索", () => {
+    expect(imageTurnRetrieval("老师截这个是想确认我这边的拖图规则吗？")).toEqual({
+      knowledge: false,
+      web: false
+    });
+    expect(imageTurnRetrieval("（老师发来了 1 张图片）")).toEqual({ knowledge: false, web: false });
+    expect(imageTurnRetrieval("这张海报上的活动什么时候").web).toBe(true);
+    expect(imageTurnRetrieval("这张海报上的活动什么时候").knowledge).toBe(false);
+    expect(imageTurnRetrieval("对照这张图总结一下我知识库里MIT6的内容").knowledge).toBe(true);
   });
 
   it("概念和笔记走各自的知识库路由", () => {

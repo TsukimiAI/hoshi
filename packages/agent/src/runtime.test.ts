@@ -1813,6 +1813,61 @@ describe("AgentRuntime", () => {
     ).toBe(true);
   });
 
+  it("桌宠发图问画面时不查知识库", async () => {
+    const searched: string[] = [];
+    const llm = new FakeLlm(["是在确认拖图。"]);
+    const runtime = new AgentRuntime({
+      persona: createPersona(),
+      llm: llm as never,
+      plugins: {
+        tools: () => [
+          {
+            type: "function",
+            function: {
+              name: "search_knowledge",
+              description: "kb",
+              parameters: { type: "object", properties: {} }
+            }
+          },
+          {
+            type: "function",
+            function: {
+              name: "web_search",
+              description: "web",
+              parameters: { type: "object", properties: {} }
+            }
+          }
+        ],
+        execute: async (name) => {
+          searched.push(name);
+          return "知识库可用文档（1）：\n1. 《MIT 6》｜讲义";
+        }
+      }
+    });
+    const events = [];
+    for await (const event of runtime.chat({
+      message: "老师截这个是想确认我这边的拖图规则吗？",
+      images: [{ mime: "image/png", data: "YQ==" }],
+      history: []
+    })) {
+      events.push(event);
+    }
+    expect(searched).toEqual([]);
+    const user = (llm.lastStreamMessages as Array<{ role: string; content: unknown }>).find(
+      (item) => item.role === "user"
+    );
+    expect(Array.isArray(user?.content)).toBe(true);
+    expect(
+      events.some(
+        (item) =>
+          item.event === "progress" &&
+          item.data.phase === "tool_done" &&
+          item.data.name === "知识库" &&
+          item.data.detail === "跳过"
+      )
+    ).toBe(true);
+  });
+
   it("桌宠可调用 list_knowledge，不能直接 search_knowledge", async () => {
     const llm = new FakeLlm(["库里有 MIT6。"], { content: "", toolCalls: [] });
     const runtime = new AgentRuntime({

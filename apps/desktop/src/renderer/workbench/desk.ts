@@ -1,3 +1,4 @@
+import { takeChatImages } from "./imageFile.js";
 import type { DeskCanvasItem, DeskMessage, DeskSession, DeskStep, DeskTurn } from "./types.js";
 import { parseDeskMarkdown, type DeskMarkdownBlock } from "./deskMarkdown.js";
 import { packDeskCards } from "./deskLayout.js";
@@ -418,6 +419,39 @@ function toolLabel(name: string): string {
   return name;
 }
 
+const turnThumbs = new Map<string, string[] | "loading">();
+
+function turnThumbSrcs(turn: DeskTurn): string[] {
+  if (turn.previews && turn.previews.length > 0) {
+    return turn.previews;
+  }
+  if (!turn.userMessageId || !turn.imageCount || !wb || !s.deskSessionId) {
+    return [];
+  }
+  const cached = turnThumbs.get(turn.userMessageId);
+  if (Array.isArray(cached)) {
+    return cached;
+  }
+  if (cached !== "loading") {
+    const messageId = turn.userMessageId;
+    const sessionId = s.deskSessionId;
+    turnThumbs.set(messageId, "loading");
+    void wb
+      .listMessageImages(sessionId, messageId)
+      .then((data) => {
+        turnThumbs.set(
+          messageId,
+          data.images.map((image) => `data:${image.mime};base64,${image.data}`)
+        );
+        paintDeskActivity();
+      })
+      .catch(() => {
+        turnThumbs.set(messageId, []);
+      });
+  }
+  return [];
+}
+
 export function paintDeskActivity(): void {
   const list = deskHistoryList;
   const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight <= 48;
@@ -436,6 +470,18 @@ export function paintDeskActivity(): void {
     const title = document.createElement("span");
     title.textContent = turn.title;
     head.append(chev, title);
+    const thumbs = turnThumbSrcs(turn);
+    if (thumbs.length > 0) {
+      const row = document.createElement("span");
+      row.className = "desk-turn-thumbs";
+      for (const src of thumbs) {
+        const img = document.createElement("img");
+        img.src = src;
+        img.alt = "图片";
+        row.appendChild(img);
+      }
+      head.appendChild(row);
+    }
     head.addEventListener("click", () => {
       turn.open = !turn.open;
       if (turn.canvasItems && turn.canvasItems.length > 0) {
@@ -524,6 +570,7 @@ function turnsFromMessages(
         id: snap?.turnId ?? message.id,
         userMessageId: message.id,
         title: message.content,
+        imageCount: message.imageCount ?? 0,
         open: true,
         steps: [...(stepsByUser.get(message.id) ?? [])],
         canvasItems: snap?.document.items
@@ -550,13 +597,25 @@ function paintDeskHistory(
 function paintDeskAttach(): void {
   deskAttachRow.hidden = s.deskPendingImages.length === 0;
   deskAttachRow.replaceChildren();
-  for (const image of s.deskPendingImages) {
+  s.deskPendingImages.forEach((image, index) => {
+    const wrap = document.createElement("span");
+    wrap.className = "desk-thumb-wrap";
     const img = document.createElement("img");
     img.className = "desk-thumb";
     img.src = image.preview;
     img.alt = "附件";
-    deskAttachRow.appendChild(img);
-  }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "desk-thumb-remove";
+    remove.textContent = "×";
+    remove.title = "移除";
+    remove.addEventListener("click", () => {
+      s.deskPendingImages.splice(index, 1);
+      paintDeskAttach();
+    });
+    wrap.append(img, remove);
+    deskAttachRow.appendChild(wrap);
+  });
 }
 
 async function removeDeskItem(id: string): Promise<void> {
@@ -1091,22 +1150,11 @@ export async function refreshDesk(): Promise<void> {
 }
 
 export async function addDeskFiles(files: FileList | File[]): Promise<void> {
-  const list = Array.from(files).filter((file) => file.type.startsWith("image/"));
-  for (const file of list.slice(0, 4 - s.deskPendingImages.length)) {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result ?? ""));
-      reader.onerror = () => reject(new Error("读图失败"));
-      reader.readAsDataURL(file);
-    });
-    const comma = dataUrl.indexOf(",");
-    const header = dataUrl.slice(0, comma);
-    const mimeMatch = /data:(image\/[a-zA-Z0-9.+-]+);base64/.exec(header);
-    const mime = mimeMatch?.[1] || file.type;
-    const data = dataUrl.slice(comma + 1);
-    s.deskPendingImages.push({ mime, data, preview: dataUrl });
-  }
+  const rejected = await takeChatImages(files, s.deskPendingImages);
   paintDeskAttach();
+  if (rejected) {
+    deskStatus.textContent = rejected;
+  }
 }
 
 function setDeskSending(busy: boolean): void {
@@ -1148,6 +1196,7 @@ export async function sendDeskChat(): Promise<void> {
   s.deskViewingTurnId = null;
   deskStatus.textContent = "生成中…";
   const images = s.deskPendingImages.map(({ mime, data }) => ({ mime, data }));
+  const previews = s.deskPendingImages.map((image) => image.preview);
   deskInput.value = "";
   s.deskPendingImages = [];
   paintDeskAttach();
@@ -1160,7 +1209,9 @@ export async function sendDeskChat(): Promise<void> {
     id: `live-${Date.now()}`,
     title,
     open: true,
-    steps: []
+    steps: [],
+    imageCount: images.length,
+    previews
   };
   for (const item of s.deskTurns) item.open = false;
   s.deskTurns.push(turn);

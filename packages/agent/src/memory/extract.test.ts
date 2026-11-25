@@ -45,6 +45,8 @@ describe("canExtractMemory", () => {
     expect(canExtractMemory(true, "请记住我喜欢红茶")).toBe(true);
     expect(canExtractMemory(true, "我叫韩")).toBe(true);
     expect(canExtractMemory(true, "今天天气怎么样")).toBe(false);
+    expect(canExtractMemory(true, "（老师发来了 2 张图片）")).toBe(false);
+    expect(canExtractMemory(true, "")).toBe(false);
   });
 });
 

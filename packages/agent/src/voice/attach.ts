@@ -41,6 +41,7 @@ export interface VoiceGatewayDeps {
   repo: SessionRepo;
   memoryRepo: MemoryRepo;
   buildHistory: (sessionId: string) => Promise<SessionContext>;
+  takeScreen: (sessionId: string) => { mime: "image/jpeg"; data: string } | null;
 }
 
 function sendJson(ws: WebSocket, data: object): void {
@@ -56,6 +57,7 @@ function logVoice(payload: Record<string, unknown>): void {
 async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void> {
   voiceSessions += 1;
   let sessionId = "";
+  let sessionKind: "chat" | "desk" = "chat";
   let asr: { start(): Promise<void>; sendPcm: (pcm: Buffer) => void; close: () => void } | null = null;
   let tts: TtsEngine | null = null;
   let gsvWeightsReady = false;
@@ -332,7 +334,8 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
         message: text,
         history,
         compactUsage,
-        signal
+        signal,
+        screen: sessionKind === "chat" ? deps.takeScreen(sessionId) : null
       })) {
         if (signal.aborted || myEpoch !== epoch) {
           break;
@@ -491,6 +494,7 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
             ws.close();
             return;
           }
+          sessionKind = session.kind;
           const snap = deps.getLlm().snapshot();
           const voice = deps.getVoiceSettings();
           if (voice.ttsBackend === "gpt-sovits" && !gsvWeightsReady) {

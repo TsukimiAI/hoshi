@@ -15,6 +15,7 @@
         <button class="nav-btn" type="button" data-section="usage">用量</button>
         <button class="nav-btn" type="button" data-section="presentation">表现</button>
         <button class="nav-btn" type="button" data-section="voice">语音</button>
+        <button class="nav-btn" type="button" data-section="screen">桌面</button>
         <button class="nav-btn" type="button" data-section="knowledge">知识库</button>
         <button class="nav-btn" type="button" data-section="plugins">插件市场</button>
       </aside>
@@ -101,6 +102,10 @@
               <label>SoVITS 权重路径（可选）<input id="gsvSovitsWeights" type="text" /></label>
               <button id="test-gsv" type="button">测试 GPT-SoVITS</button>
             </div>
+          </div>
+          <div class="section hidden" data-section="screen">
+            <h1>桌面</h1>
+            <label class="plugin-toggle"><input id="screenEnabled" type="checkbox" />看着桌面</label>
           </div>
           <div class="section hidden" data-section="knowledge">
             <h1>知识库</h1>

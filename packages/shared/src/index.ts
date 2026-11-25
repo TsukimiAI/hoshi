@@ -1,3 +1,4 @@
+export * from "./chatImage";
 export * from "./emotion";
 export * from "./sse";
 export * from "./session";
@@ -6,3 +7,4 @@ export * from "./plugin";
 export * from "./memory";
 export * from "./canvas";
 export * from "./knowledge";
+export * from "./petScreen";

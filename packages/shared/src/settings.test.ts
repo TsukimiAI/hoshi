@@ -97,6 +97,12 @@ describe("resolveHoshiSettings", () => {
     ).toMatchObject({ ttsModel: "cosyvoice-v2", ttsVoice: "longxiaochun_v2" });
   });
 
+  it("旧配置没有看着桌面时为关", () => {
+    expect(resolveHoshiSettings(null).screen.enabled).toBe(false);
+    expect(resolveHoshiSettings({ model: { model: "x" } }).screen.enabled).toBe(false);
+    expect(resolveHoshiSettings({ screen: { enabled: true } }).screen.enabled).toBe(true);
+  });
+
   it("可关闭记忆自动写入", () => {
     expect(resolveHoshiSettings({ chat: { memoryAutoWrite: false } }).chat.memoryAutoWrite).toBe(
       false

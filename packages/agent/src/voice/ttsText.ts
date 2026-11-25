@@ -1,4 +1,4 @@
-const EMOTION_MARK_RE = /⟦[\w-]+⟧|[～~][\w-]+/g;
+const EMOTION_MARK_RE = /⟦[^⟧]*⟧|[～~]\s*[\w-]+/g;
 const URL_RE = /https?:\/\/\S+/gi;
 const MD_LINK_RE = /\[([^\]]+)\]\([^)]+\)/g;
 const WEB_BLOCK_RE = /\[webpage[^\]]*\][\s\S]*?\[\/?webpage[^\]]*\]/gi;

@@ -41,6 +41,17 @@ describe("SentenceSplitter", () => {
     ]);
   });
 
+  it("不把标识符和文件名里的点当句号", () => {
+    const splitter = new SentenceSplitter();
+    expect(splitter.push("看 is.")).toEqual([]);
+    expect(splitter.push("has 这个字段。下一句。")).toEqual(["看 is.has 这个字段。"]);
+    expect(splitter.flush()).toEqual(["下一句。"]);
+
+    const file = new SentenceSplitter();
+    expect(file.push("在 main.ts 里改。下一处。")).toEqual(["在 main.ts 里改。"]);
+    expect(file.flush()).toEqual(["下一处。"]);
+  });
+
   it("不把版本号小数点当句号", () => {
     const splitter = new SentenceSplitter();
     expect(splitter.push("3.8前瞻的资料已经过时了。8版本日期不确定。")).toEqual([

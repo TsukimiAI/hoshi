@@ -1,4 +1,13 @@
-import { parseUsage, type ChatMessage, type LlmUsage, type UsagePurpose } from "@hoshi/shared";
+import {
+  CHAT_IMAGE_MAX_COUNT,
+  CHAT_IMAGE_MAX_DATA_CHARS,
+  isChatImageMime,
+  normalizeChatImageMime,
+  parseUsage,
+  type ChatMessage,
+  type LlmUsage,
+  type UsagePurpose
+} from "@hoshi/shared";
 import type { LlmTool } from "../plugins/types";
 import { parseCompleteChatResponse, type CompleteChatResult } from "../plugins/parseTool";
 
@@ -81,20 +90,18 @@ export function toLlmMessages(messages: ChatMessage[]): LlmMessage[] {
   }));
 }
 
-const IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-
 export function sanitizeChatImages(
   images: Array<{ mime: string; data: string }> | undefined,
-  maxCount = 4
+  maxCount = CHAT_IMAGE_MAX_COUNT
 ): Array<{ mime: string; data: string }> {
   if (!images?.length) {
     return [];
   }
   const out: Array<{ mime: string; data: string }> = [];
   for (const image of images) {
-    const mime = image.mime.trim().toLowerCase();
-    const data = image.data.replace(/\s+/g, "");
-    if (!IMAGE_MIME.has(mime) || !data || data.length > 1_800_000) {
+    const mime = normalizeChatImageMime(image.mime ?? "");
+    const data = (image.data ?? "").replace(/\s+/g, "");
+    if (!isChatImageMime(mime) || !data || data.length > CHAT_IMAGE_MAX_DATA_CHARS) {
       continue;
     }
     out.push({ mime, data });

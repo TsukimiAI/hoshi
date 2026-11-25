@@ -1,7 +1,14 @@
 import { EMOTIONS, isEmotion, type Emotion } from "@hoshi/shared";
 
-const BRACKET_MARK_RE = /⟦([\w-]+)⟧/g;
-const EDGE_TILDE_RE = /(?:^[～~]([\w-]+)\s*|[～~]([\w-]+)\s*$)/;
+const MARK_NAME = String.raw`[A-Za-z][\w-]*|[\u4e00-\u9fff]{1,8}`;
+const BRACKET_MARK_RE = /⟦\s*([^⟧]+?)\s*⟧/g;
+const EDGE_TILDE_RE = new RegExp(String.raw`(?:^[～~]\s*(${MARK_NAME})\s*|[～~]\s*(${MARK_NAME})\s*$)`);
+const TILDE_MARK_RE = new RegExp(String.raw`[～~]\s*(${MARK_NAME})`, "g");
+const LABEL_MARK_RE = new RegExp(String.raw`(?:情绪|表情|emotion)\s*[:：]\s*(${MARK_NAME})`, "gi");
+const WRAP_MARK_RE = new RegExp(
+  String.raw`[（(【\[「『［〖〈]\s*(${MARK_NAME})\s*[）)】\]」』］〗〉]`,
+  "g"
+);
 const YANDERE_RE = /(只许看我|不准离开|只能是我|吃醋|独占|属于我)/;
 const VERY_LIKE_RE = /(最喜欢你|好喜欢老师|心动|心跳加速)/;
 const LIKE_RE = /(喜欢你|亲近|想靠近|温柔点)/;
@@ -36,10 +43,83 @@ const ALIAS: Record<string, Emotion> = {
   upset: "sad"
 };
 
+const CN_ALIAS: Record<string, Emotion> = {
+  正常: "normal",
+  平静: "normal",
+  开心: "happy",
+  高兴: "happy",
+  快乐: "happy",
+  超开心: "very-happy",
+  非常开心: "very-happy",
+  喜欢: "like",
+  亲近: "like",
+  超喜欢: "very-like",
+  难过: "sad",
+  伤心: "sad",
+  生气: "angry",
+  害羞: "shy",
+  傲娇: "shy-and-indignation",
+  嘴硬: "shy-and-indignation",
+  惊讶: "shock",
+  吃惊: "shock",
+  质疑: "doubt",
+  怀疑: "doubt",
+  困惑: "confused",
+  疑惑: "confused",
+  期待: "expect",
+  思考: "expect",
+  无奈: "wry",
+  吐槽: "wry",
+  嫌弃: "disdain",
+  抗拒: "resist",
+  委屈: "resentment",
+  吃醋: "yandere",
+  占有: "yandere"
+};
+
+function stripMarkedEmotions(text: string): { text: string; emotion: Emotion | null } {
+  let emotion: Emotion | null = null;
+  const apply = (pattern: RegExp, dropUnknown: boolean) => {
+    text = text.replace(pattern, (all, name: string) => {
+      const coerced = coerceEmotion(name);
+      if (!coerced && !dropUnknown) {
+        return all;
+      }
+      if (coerced) {
+        emotion = coerced;
+      }
+      return "";
+    });
+  };
+  apply(BRACKET_MARK_RE, true);
+  apply(WRAP_MARK_RE, false);
+  apply(TILDE_MARK_RE, false);
+  apply(LABEL_MARK_RE, false);
+  return { text, emotion };
+}
+
+function tidyEmotionResidue(text: string): string {
+  return text
+    .replace(/[（(【\[「『]\s*[）)】\]」』]/g, "")
+    .replace(/[（(【\[「『]\s*$/g, "")
+    .replace(/^\s*[）)】\]」』]/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([。！？，、])/g, "$1")
+    .trim();
+}
+
 function peelBareEmotion(text: string): { text: string; emotion: Emotion | null } {
   const names = [...EMOTIONS].sort((left, right) => right.length - left.length);
   let emotion: Emotion | null = null;
   let next = text;
+  next = next.replace(/(?<![A-Za-z])([A-Za-z]+(?:[_-][A-Za-z]+)+)(?![A-Za-z])/gi, (all) => {
+    const coerced = coerceEmotion(all);
+    if (!coerced) {
+      return all;
+    }
+    emotion = coerced;
+    return "";
+  });
   for (const name of names) {
     const pattern = new RegExp(`(?<![A-Za-z-])${name.replace(/-/g, "\\-")}(?![A-Za-z-])`, "gi");
     if (pattern.test(next)) {
@@ -60,21 +140,28 @@ function peelBareEmotion(text: string): { text: string; emotion: Emotion | null 
   return { text: next.replace(/[ \t]{2,}/g, " ").trim(), emotion };
 }
 
+function maskInlineCode(text: string): { text: string; spans: string[] } {
+  const spans: string[] = [];
+  const next = text.replace(/`[^`\n]+`/g, (span) => {
+    spans.push(span);
+    return `\uE000${spans.length - 1}\uE001`;
+  });
+  return { text: next, spans };
+}
+
+function unmaskInlineCode(text: string, spans: string[]): string {
+  return text.replace(/\uE000(\d+)\uE001/g, (all, index: string) => spans[Number(index)] ?? all);
+}
+
 export function parseSentenceEmotion(
   rawSentence: string,
   fallbackEmotion: Emotion
 ): { text: string; emotion: Emotion; explicit: boolean } {
-  let text = rawSentence.trim();
-  let emotion: Emotion | null = null;
-
-  const brackets = [...text.matchAll(BRACKET_MARK_RE)];
-  for (const match of brackets) {
-    const coerced = coerceEmotion(match[1] ?? "");
-    if (coerced) {
-      emotion = coerced;
-    }
-  }
-  text = text.replace(/⟦[\w-]+⟧/g, "").trim();
+  const held = maskInlineCode(rawSentence.trim());
+  let text = held.text;
+  const marked = stripMarkedEmotions(text);
+  text = marked.text;
+  let emotion = marked.emotion;
 
   const tilde = text.match(EDGE_TILDE_RE);
   if (tilde) {
@@ -86,7 +173,7 @@ export function parseSentenceEmotion(
   }
 
   const peeled = peelBareEmotion(text);
-  text = peeled.text;
+  text = unmaskInlineCode(tidyEmotionResidue(peeled.text), held.spans);
   if (!emotion && peeled.emotion) {
     emotion = peeled.emotion;
   }
@@ -169,7 +256,12 @@ export function resolveSentenceEmotion(rawSentence: string, fallbackEmotion: Emo
 }
 
 function coerceEmotion(raw: string): Emotion | null {
-  const key = raw.toLowerCase().replace(/_/g, "-");
+  const trimmed = raw.trim();
+  const labeled = CN_ALIAS[trimmed];
+  if (labeled) {
+    return labeled;
+  }
+  const key = trimmed.toLowerCase().replace(/_/g, "-");
   if (isEmotion(key)) {
     return key;
   }

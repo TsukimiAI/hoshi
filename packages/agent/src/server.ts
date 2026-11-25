@@ -8,6 +8,8 @@ import type {
   ChatRequestBody,
   ChatSettings,
   HoshiSettings,
+  PetGlanceRequest,
+  PetScreenPutRequest,
   PluginListResponse,
   SessionListResponse,
   SessionMessagesResponse,
@@ -21,10 +23,14 @@ import { sanitizeFactText } from "./memory/extract";
 import { PluginRegistry } from "./plugins/registry";
 import { CompositePluginHost } from "./plugins/composite";
 import { McpPluginHost } from "./plugins/mcpHost";
+import { dirname, join } from "node:path";
 import { migrateDb, openDatabase } from "./storage/db";
 import { MemoryRepo } from "./storage/memoryRepo";
 import { SessionRepo } from "./storage/sessionRepo";
+import { ChatImageStore } from "./chatImages";
 import { runSessionChat } from "./chatTurn";
+import { PetScreenSlot, freshPetScreen } from "./petScreen/slot";
+import { runPetGlance } from "./petScreen/glance";
 import { buildSessionContext } from "./sessionContext";
 import { attachVoiceGateway, voiceSessionCount } from "./voice/attach";
 import { attachTtsGateway } from "./voice/ttsGateway";
@@ -126,7 +132,12 @@ export function createAgentServer(config: AgentServerConfig) {
   plugins.reload(lastSettings);
   const db = openDatabase(config.databasePath);
   migrateDb(db);
-  const repo = new SessionRepo(db);
+  const imageStore =
+    config.databasePath === ":memory:"
+      ? undefined
+      : new ChatImageStore(join(dirname(config.databasePath), "chat-images"));
+  const repo = new SessionRepo(db, imageStore);
+  const petSlot = new PetScreenSlot();
   const ready = Promise.resolve();
   const authToken = randomUUID();
   const llm = new OpenAiCompatClient(
@@ -193,6 +204,9 @@ export function createAgentServer(config: AgentServerConfig) {
     });
     chatSettings = { ...settings.chat };
     lastSettings = settings;
+    if (!settings.screen.enabled) {
+      petSlot.clearPixels();
+    }
     knowledgeService.applySettings(settings.knowledge);
     plugins.reload(settings);
     void mcp.reload();
@@ -329,7 +343,28 @@ export function createAgentServer(config: AgentServerConfig) {
         writeJson(res, 404, { error: "session_not_found" });
         return;
       }
+      petSlot.clearIfSession(deleteMatch[1]);
       writeJson(res, 200, { ok: true });
+      return;
+    }
+
+    const imageMatch = url.pathname.match(
+      /^\/v1\/sessions\/([0-9a-fA-F-]+)\/messages\/([0-9a-fA-F-]+)\/images$/
+    );
+    if (method === "GET" && imageMatch) {
+      const sessionId = imageMatch[1];
+      const messageId = imageMatch[2];
+      const session = await repo.getSession(sessionId);
+      if (!session) {
+        writeJson(res, 404, { error: "session_not_found" });
+        return;
+      }
+      const owned = await repo.messageInSession(sessionId, messageId);
+      if (!owned) {
+        writeJson(res, 404, { error: "message_not_found" });
+        return;
+      }
+      writeJson(res, 200, { images: await repo.readMessageImages(messageId) });
       return;
     }
 
@@ -752,6 +787,102 @@ export function createAgentServer(config: AgentServerConfig) {
       return;
     }
 
+    if (method === "POST" && url.pathname === "/v1/pet/screen") {
+      const body = await readBody<PetScreenPutRequest>(req, res, 8 * 1024 * 1024);
+      if (!body) {
+        return;
+      }
+      const sessionId = body.sessionId?.trim() ?? "";
+      const session = sessionId ? await repo.getSession(sessionId) : null;
+      if (!session) {
+        writeJson(res, 404, { message: "会话不存在" });
+        return;
+      }
+      if (session.kind !== "chat") {
+        writeJson(res, 400, { message: "只有桌宠会话可以看桌面" });
+        return;
+      }
+      if (!lastSettings.screen.enabled) {
+        petSlot.clearPixels();
+        writeJson(res, 400, { message: "看着桌面没有打开" });
+        return;
+      }
+      const stored = petSlot.put({
+        sessionId,
+        mime: body.mime ?? "",
+        data: body.data ?? "",
+        hash: body.hash ?? "",
+        now: Date.now()
+      });
+      if (!stored.ok) {
+        writeJson(res, 400, { message: stored.reason === "too-large" ? "图片太大" : "图片无法识别" });
+        return;
+      }
+      console.info(
+        JSON.stringify({
+          src: "hoshi.screen",
+          sessionId,
+          hash: (body.hash ?? "").trim().toLowerCase(),
+          bytes: (body.data ?? "").replace(/\s+/g, "").length,
+          stored: stored.stored
+        })
+      );
+      writeJson(res, 200, { ok: true, stored: stored.stored });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/v1/pet/glance") {
+      const body = await readBody<PetGlanceRequest>(req, res);
+      if (!body) {
+        return;
+      }
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive"
+      });
+      const glanceAbort = new AbortController();
+      const abortGlance = (): void => {
+        if (!glanceAbort.signal.aborted) {
+          glanceAbort.abort();
+        }
+      };
+      req.once("aborted", abortGlance);
+      req.once("close", () => {
+        if (!res.writableEnded) {
+          abortGlance();
+        }
+      });
+      try {
+        const sessionId = body.sessionId?.trim() ?? "";
+        const session = sessionId ? await repo.getSession(sessionId) : null;
+        if (!session) {
+          writeSse(res, { event: "error", data: { message: "会话不存在" } });
+        } else {
+          const events = await runPetGlance({
+            sessionId,
+            sessionKind: session.kind,
+            enabled: lastSettings.screen.enabled,
+            stillEnabled: () => lastSettings.screen.enabled,
+            personaPrompt: persona.systemPrompt,
+            now: Date.now(),
+            signal: glanceAbort.signal,
+            slot: petSlot,
+            completeChat: (messages) => llm.completeChat(messages, [], { timeoutMs: 60_000 }),
+            appendMessage: (row) => repo.appendMessage(row)
+          });
+          for (const event of events) {
+            writeSse(res, event);
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "看桌面失败";
+        writeSse(res, { event: "error", data: { message } });
+      }
+      res.end();
+      return;
+    }
+
     if (method !== "POST" || url.pathname !== "/v1/chat") {
       writeJson(res, 404, { error: "not_found" });
       return;
@@ -798,18 +929,28 @@ export function createAgentServer(config: AgentServerConfig) {
         return;
       }
       const desk = mode.desk;
+      const requestedImages = Array.isArray(body.images) ? body.images.length : 0;
+      const images = sanitizeChatImages(body.images);
+      if (requestedImages > 0 && images.length === 0) {
+        writeSse(res, { event: "error", data: { message: "图片无法识别，请换 png、jpeg、webp 或 gif，且单张不要过大" } });
+        return;
+      }
       const hint = desk ? String(body.message ?? "") : "";
       canvasHost.setEnabled(desk, sessionId);
       webHost.setEnabled(true);
       canvasHost.setTurnHint(hint);
       const runTurn = async (): Promise<void> => {
         const images = sanitizeChatImages(body.images);
-        const { history, compactUsage } = await buildSessionContext(
+        const { history, compactUsage, lookback } = await buildSessionContext(
           repo,
           sessionId,
           chatSettings,
           llm
         );
+        let lookbackImages: Awaited<ReturnType<SessionRepo["readMessageImages"]>> = [];
+        if (images.length === 0 && lookback) {
+          lookbackImages = await repo.readMessageImages(lookback.messageId);
+        }
         if (desk) {
           const prior = history
             .filter((item) => item.role === "user")
@@ -833,6 +974,19 @@ export function createAgentServer(config: AgentServerConfig) {
           signal: turnAbort.signal,
           canvasPrompt: desk ? `${CANVAS_USAGE_PROMPT}\n${canvasHost.inventoryPrompt() ?? ""}` : undefined,
           images,
+          screen: desk
+            ? null
+            : freshPetScreen({
+                enabled: lastSettings.screen.enabled,
+                kind: session.kind,
+                sessionId,
+                now: Date.now(),
+                slot: petSlot
+              }),
+          lookback:
+            images.length === 0 && lookback && lookbackImages.length > 0
+              ? { historyIndex: lookback.historyIndex, images: lookbackImages }
+              : undefined,
           workspace: desk ? "desk" : undefined,
           commitCanvas: desk
             ? async ({ turnId, sessionId: sid, userMessageId, steps }) => {
@@ -907,7 +1061,15 @@ export function createAgentServer(config: AgentServerConfig) {
     getVoiceSettings: () => lastSettings.voice,
     repo,
     memoryRepo,
-    buildHistory: (sessionId) => buildSessionContext(repo, sessionId, chatSettings, llm)
+    buildHistory: (sessionId) => buildSessionContext(repo, sessionId, chatSettings, llm),
+    takeScreen: (sessionId) =>
+      freshPetScreen({
+        enabled: lastSettings.screen.enabled,
+        kind: "chat",
+        sessionId,
+        now: Date.now(),
+        slot: petSlot
+      })
   });
   attachTtsGateway(server, {
     authToken,

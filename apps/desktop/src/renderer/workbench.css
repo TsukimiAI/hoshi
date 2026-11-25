@@ -1207,6 +1207,30 @@ button:disabled {
   outline-offset: -10px;
 }
 
+#desk-board.is-file-drop,
+#desk-chat.is-file-drop {
+  outline: 2px dashed #3d5bd4;
+  outline-offset: -4px;
+  background: rgba(232, 238, 255, 0.92);
+}
+
+#desk-board.is-file-drop::after,
+#desk-chat.is-file-drop::after {
+  content: "松开以上传图片";
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #24357a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  pointer-events: none;
+  z-index: 5;
+}
+
 .desk-item {
   position: absolute;
   min-width: 0;
@@ -1633,6 +1657,7 @@ button:disabled {
 }
 
 #desk-chat {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1653,6 +1678,39 @@ button:disabled {
   height: 44px;
   border-radius: 8px;
   border: 1px solid var(--line);
+}
+
+.desk-thumb-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.desk-thumb-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 8px;
+  padding: 0;
+  background: #4d5752;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.desk-turn-head .desk-turn-thumbs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+}
+
+.desk-turn-thumbs img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 4px;
 }
 
 #desk-attach-btn {

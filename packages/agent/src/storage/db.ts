@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const DB_SCHEMA_VERSION = 6;
+export const DB_SCHEMA_VERSION = 7;
 
 let lastIsoMs = 0;
 
@@ -163,13 +163,25 @@ CREATE TABLE IF NOT EXISTS memory_vec_state (
 );
 `;
 
+const SCHEMA_V7 = `
+CREATE TABLE IF NOT EXISTS message_images (
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  idx INTEGER NOT NULL,
+  mime TEXT NOT NULL,
+  rel_path TEXT NOT NULL,
+  PRIMARY KEY (message_id, idx)
+);
+CREATE INDEX IF NOT EXISTS idx_message_images_message ON message_images(message_id, idx);
+`;
+
 const MIGRATIONS: Array<string | ((db: DatabaseSync) => void)> = [
   SCHEMA_V1,
   SCHEMA_V2,
   SCHEMA_V3,
   SCHEMA_V4,
   migrateCanvasV5,
-  SCHEMA_V6
+  SCHEMA_V6,
+  SCHEMA_V7
 ];
 
 export function openDatabase(dbPath: string, opts?: { allowExtension?: boolean }): DatabaseSync {

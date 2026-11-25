@@ -1,4 +1,4 @@
-import type { MemoryKind } from "@hoshi/shared";
+import { isImageOnlyUserText, type MemoryKind } from "@hoshi/shared";
 import type { LlmMessage } from "../llm/openai";
 
 export const MEMORY_FACT_MIN = 4;
@@ -92,6 +92,9 @@ export function normalizeTopic(raw: unknown): string {
 }
 
 export function canExtractMemory(autoWrite: boolean, userText: string): boolean {
+  if (isImageOnlyUserText(userText)) {
+    return false;
+  }
   return autoWrite && shouldExtract(userText);
 }
 

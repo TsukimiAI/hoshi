@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, screen } from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getMainWindow, openAppBox } from "./pluginContrib";
+import { isPetScreenExcluded } from "./screenCapture";
 
 export const TOAST_W = 268;
 export const TOAST_H = 128;
@@ -155,6 +156,7 @@ async function present(item: ToastItem): Promise<void> {
         }
       });
       toastWin.setAlwaysOnTop(true, "floating");
+      toastWin.setContentProtection(isPetScreenExcluded());
       toastWin.webContents.on("did-finish-load", () => {
         pageReady = true;
         pushPayload();
@@ -226,4 +228,10 @@ export function closeRemindToast(): void {
 
 export function relayoutRemindToast(): void {
   if (visible) layoutToast();
+}
+
+export function setRemindToastContentProtection(on: boolean): void {
+  if (toastWin && !toastWin.isDestroyed()) {
+    toastWin.setContentProtection(on);
+  }
 }
