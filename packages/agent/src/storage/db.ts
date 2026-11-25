@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const DB_SCHEMA_VERSION = 7;
+export const DB_SCHEMA_VERSION = 8;
 
 let lastIsoMs = 0;
 
@@ -174,6 +174,10 @@ CREATE TABLE IF NOT EXISTS message_images (
 CREATE INDEX IF NOT EXISTS idx_message_images_message ON message_images(message_id, idx);
 `;
 
+const SCHEMA_V8 = `
+ALTER TABLE messages ADD COLUMN interval_id TEXT;
+`;
+
 const MIGRATIONS: Array<string | ((db: DatabaseSync) => void)> = [
   SCHEMA_V1,
   SCHEMA_V2,
@@ -181,7 +185,8 @@ const MIGRATIONS: Array<string | ((db: DatabaseSync) => void)> = [
   SCHEMA_V4,
   migrateCanvasV5,
   SCHEMA_V6,
-  SCHEMA_V7
+  SCHEMA_V7,
+  SCHEMA_V8
 ];
 
 export function openDatabase(dbPath: string, opts?: { allowExtension?: boolean }): DatabaseSync {

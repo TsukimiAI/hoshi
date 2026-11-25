@@ -30,8 +30,9 @@ import { SessionRepo } from "./storage/sessionRepo";
 import { ChatImageStore } from "./chatImages";
 import { runSessionChat } from "./chatTurn";
 import { PetScreenSlot, freshPetScreen } from "./petScreen/slot";
+import { matchGlanceInterval } from "./petScreen/content";
 import { runPetGlance } from "./petScreen/glance";
-import { buildSessionContext } from "./sessionContext";
+import { buildSessionContext, type SessionContext } from "./sessionContext";
 import { attachVoiceGateway, voiceSessionCount } from "./voice/attach";
 import { attachTtsGateway } from "./voice/ttsGateway";
 import { applyGsvWeights } from "./voice/gptSovits";
@@ -138,6 +139,33 @@ export function createAgentServer(config: AgentServerConfig) {
       : new ChatImageStore(join(dirname(config.databasePath), "chat-images"));
   const repo = new SessionRepo(db, imageStore);
   const petSlot = new PetScreenSlot();
+  const turnWithInterval = async (
+    sessionId: string,
+    message: string,
+    kind: "chat" | "desk",
+    ordinary: SessionContext
+  ): Promise<{ history: SessionContext["history"]; lookback?: SessionContext["lookback"]; intervalId: string | null }> => {
+    const intervalId = matchGlanceInterval({
+      enabled: lastSettings.screen.enabled,
+      kind,
+      sessionId,
+      message,
+      now: Date.now(),
+      open: petSlot.openInterval()
+    });
+    if (!intervalId) {
+      return { history: ordinary.history, lookback: ordinary.lookback, intervalId: null };
+    }
+    const rows = await repo.listMessages(sessionId, 400);
+    if (petSlot.openInterval()?.id !== intervalId) {
+      return { history: ordinary.history, lookback: ordinary.lookback, intervalId: null };
+    }
+    petSlot.touchInterval(Date.now());
+    return {
+      history: SessionRepo.toPromptHistory(rows.filter((row) => row.intervalId === intervalId)),
+      intervalId
+    };
+  };
   const ready = Promise.resolve();
   const authToken = randomUUID();
   const llm = new OpenAiCompatClient(
@@ -206,6 +234,7 @@ export function createAgentServer(config: AgentServerConfig) {
     lastSettings = settings;
     if (!settings.screen.enabled) {
       petSlot.clearPixels();
+      petSlot.clearInterval();
     }
     knowledgeService.applySettings(settings.knowledge);
     plugins.reload(settings);
@@ -787,6 +816,27 @@ export function createAgentServer(config: AgentServerConfig) {
       return;
     }
 
+    if (method === "POST" && url.pathname === "/v1/pet/glance-join") {
+      const body = await readBody<{ sessionId?: string; message?: string }>(req, res, 64 * 1024);
+      if (!body) {
+        return;
+      }
+      const sessionId = body.sessionId?.trim() ?? "";
+      const session = sessionId ? await repo.getSession(sessionId) : null;
+      const intervalId =
+        session &&
+        matchGlanceInterval({
+          enabled: lastSettings.screen.enabled,
+          kind: session.kind,
+          sessionId,
+          message: body.message ?? "",
+          now: Date.now(),
+          open: petSlot.openInterval()
+        });
+      writeJson(res, 200, { join: Boolean(intervalId) });
+      return;
+    }
+
     if (method === "POST" && url.pathname === "/v1/pet/screen") {
       const body = await readBody<PetScreenPutRequest>(req, res, 8 * 1024 * 1024);
       if (!body) {
@@ -804,6 +854,7 @@ export function createAgentServer(config: AgentServerConfig) {
       }
       if (!lastSettings.screen.enabled) {
         petSlot.clearPixels();
+        petSlot.clearInterval();
         writeJson(res, 400, { message: "看着桌面没有打开" });
         return;
       }
@@ -947,6 +998,10 @@ export function createAgentServer(config: AgentServerConfig) {
           chatSettings,
           llm
         );
+        const turned = await turnWithInterval(sessionId, body.message ?? "", session.kind, {
+          history,
+          lookback
+        });
         let lookbackImages: Awaited<ReturnType<SessionRepo["readMessageImages"]>> = [];
         if (images.length === 0 && lookback) {
           lookbackImages = await repo.readMessageImages(lookback.messageId);
@@ -969,7 +1024,7 @@ export function createAgentServer(config: AgentServerConfig) {
           chatSettings,
           sessionId,
           message: body.message,
-          history,
+          history: turned.history,
           compactUsage,
           signal: turnAbort.signal,
           canvasPrompt: desk ? `${CANVAS_USAGE_PROMPT}\n${canvasHost.inventoryPrompt() ?? ""}` : undefined,
@@ -983,8 +1038,9 @@ export function createAgentServer(config: AgentServerConfig) {
                 now: Date.now(),
                 slot: petSlot
               }),
+          intervalId: turned.intervalId,
           lookback:
-            images.length === 0 && lookback && lookbackImages.length > 0
+            images.length === 0 && !turned.intervalId && lookback && lookbackImages.length > 0
               ? { historyIndex: lookback.historyIndex, images: lookbackImages }
               : undefined,
           workspace: desk ? "desk" : undefined,
@@ -1062,6 +1118,8 @@ export function createAgentServer(config: AgentServerConfig) {
     repo,
     memoryRepo,
     buildHistory: (sessionId) => buildSessionContext(repo, sessionId, chatSettings, llm),
+    applyGlanceInterval: (sessionId, message, kind, ordinary) =>
+      turnWithInterval(sessionId, message, kind, ordinary),
     takeScreen: (sessionId) =>
       freshPetScreen({
         enabled: lastSettings.screen.enabled,

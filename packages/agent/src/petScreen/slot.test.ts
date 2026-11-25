@@ -86,3 +86,17 @@ describe("freshPetScreen", () => {
     ).toBeNull();
   });
 });
+
+describe("glance interval", () => {
+  it("新区间盖掉旧的，清掉之后接不上", () => {
+    const slot = new PetScreenSlot();
+    slot.beginInterval("s", "old", 1);
+    slot.beginInterval("s", "new", 2);
+    expect(slot.openInterval()).toEqual({ id: "new", sessionId: "s", at: 2 });
+    slot.clearInterval();
+    expect(slot.openInterval()).toBeNull();
+    slot.beginInterval("s", "iv", 3);
+    slot.clearIfSession("s");
+    expect(slot.openInterval()).toBeNull();
+  });
+});

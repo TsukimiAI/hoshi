@@ -41,6 +41,12 @@ export interface VoiceGatewayDeps {
   repo: SessionRepo;
   memoryRepo: MemoryRepo;
   buildHistory: (sessionId: string) => Promise<SessionContext>;
+  applyGlanceInterval?: (
+    sessionId: string,
+    message: string,
+    kind: "chat" | "desk",
+    ordinary: SessionContext
+  ) => Promise<{ history: SessionContext["history"]; intervalId: string | null }>;
   takeScreen: (sessionId: string) => { mime: "image/jpeg"; data: string } | null;
 }
 
@@ -261,7 +267,11 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
     sendJson(ws, { type: "status", phase: "generating", epoch: myEpoch });
     const llm = deps.getLlm();
     const snap = llm.snapshot();
-    const { history, compactUsage } = await deps.buildHistory(sessionId);
+    const ordinary = await deps.buildHistory(sessionId);
+    const turned = deps.applyGlanceInterval
+      ? await deps.applyGlanceInterval(sessionId, text, sessionKind, ordinary)
+      : { history: ordinary.history, intervalId: null as string | null };
+    const { history, intervalId } = turned;
     if (signal.aborted || myEpoch !== epoch) {
       return;
     }
@@ -333,9 +343,10 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
         sessionId,
         message: text,
         history,
-        compactUsage,
+        compactUsage: ordinary.compactUsage,
         signal,
-        screen: sessionKind === "chat" ? deps.takeScreen(sessionId) : null
+        screen: sessionKind === "chat" ? deps.takeScreen(sessionId) : null,
+        intervalId
       })) {
         if (signal.aborted || myEpoch !== epoch) {
           break;

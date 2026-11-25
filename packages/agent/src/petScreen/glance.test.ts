@@ -122,12 +122,18 @@ describe("runPetGlance", () => {
     });
     expect(seen).toBe(true);
     expect(events.filter((event) => event.event === "sentence")).toHaveLength(2);
-    expect(appendMessage).toHaveBeenCalledWith({
-      sessionId: "s",
-      role: "assistant",
-      content: "在看书呀。要休息吗？",
-      emotion: "happy" satisfies Emotion
-    });
+    expect(appendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "s",
+        role: "assistant",
+        content: "在看书呀。要休息吗？",
+        emotion: "happy" satisfies Emotion
+      })
+    );
+    expect(slot.openInterval()?.sessionId).toBe("s");
+    expect(slot.openInterval()?.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    );
     expect(slot.commented()).toEqual({ hash: HASH, at: 10_000 });
   });
 

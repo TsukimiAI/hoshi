@@ -9,7 +9,7 @@ import type {
 import { addUsage, imageOnlyUserText, isImageOnlyUserText } from "@hoshi/shared";
 import { toLlmMessages, mergeTimeoutSignal, isAbortTimeout, type LlmCallOptions, type LlmMessage, type StreamChatPart } from "./llm/openai";
 import { historyWithLookback, type ChatImagePayload } from "./chatImages";
-import { PET_SCREEN_SYSTEM_NOTE, userContentWithScreen, type PetTurnScreen } from "./petScreen/content";
+import { PET_SCREEN_FOLLOW_NOTE, PET_SCREEN_SYSTEM_NOTE, userContentWithScreen, type PetTurnScreen } from "./petScreen/content";
 import { resolveSentenceEmotion } from "./emotion";
 import type { PersonaConfig } from "./persona";
 import { parseToolArgs } from "./plugins/parseTool";
@@ -85,6 +85,7 @@ export class AgentRuntime {
       sessionId?: string;
       lookback?: { historyIndex: number; images: ChatImagePayload[] };
       screen?: PetTurnScreen | null;
+      glanceInterval?: boolean;
     }
   ): AsyncGenerator<AgentEvent> {
     const images = body.images ?? [];
@@ -411,7 +412,9 @@ export class AgentRuntime {
     }
     const lookback = images.length > 0 ? null : extra?.lookback ?? null;
     const screen = extra?.screen ?? null;
-    if (screen) {
+    if (extra?.glanceInterval) {
+      promptMessages.push({ role: "system", content: PET_SCREEN_FOLLOW_NOTE });
+    } else if (screen) {
       promptMessages.push({ role: "system", content: PET_SCREEN_SYSTEM_NOTE });
     }
     const messages: LlmMessage[] = [
