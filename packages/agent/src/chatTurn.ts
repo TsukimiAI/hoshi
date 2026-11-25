@@ -8,7 +8,7 @@ import type {
   Emotion,
   LlmUsage
 } from "@hoshi/shared";
-import { addUsage } from "@hoshi/shared";
+import { addUsage, imageOnlyUserText } from "@hoshi/shared";
 import { canExtractMemory, extractLongTermOps } from "./memory/extract";
 import { planMemoryWrites } from "./memory/apply";
 import { selectAckedMemoryIds } from "./memory/inject";
@@ -18,6 +18,8 @@ import { sanitizeChatImages } from "./llm/openai";
 import type { AgentRuntime } from "./runtime";
 import type { MemoryRepo } from "./storage/memoryRepo";
 import type { SessionRepo } from "./storage/sessionRepo";
+import type { ChatImagePayload } from "./chatImages";
+import { screenForTurn, type PetTurnScreen } from "./petScreen/content";
 
 let extractQueue: Promise<void> = Promise.resolve();
 
@@ -34,6 +36,8 @@ export async function* runSessionChat(input: {
   signal?: AbortSignal;
   canvasPrompt?: string;
   images?: ChatRequestBody["images"];
+  screen?: PetTurnScreen | null;
+  lookback?: { historyIndex: number; images: ChatImagePayload[] };
   workspace?: ChatRequestBody["workspace"];
   commitCanvas?: (input: {
     turnId: string;
@@ -48,7 +52,7 @@ export async function* runSessionChat(input: {
     input;
   const images = sanitizeChatImages(input.images);
   const message =
-    (input.message ?? "").trim() || (images.length > 0 ? `（老师发来了 ${images.length} 张图片）` : "");
+    (input.message ?? "").trim() || (images.length > 0 ? imageOnlyUserText(images.length) : "");
   const turnId = randomUUID();
   const chatStarted = Date.now();
   const runtimeBody: ChatRequestBody = {
@@ -63,6 +67,15 @@ export async function* runSessionChat(input: {
     role: "user",
     content: message
   });
+  if (userMessageId && images.length > 0) {
+    try {
+      await repo.saveMessageImages(sessionId, userMessageId, images);
+    } catch {
+      await repo.deleteMessage(userMessageId);
+      yield { event: "error", data: { message: "图片没有保存下来" } };
+      return;
+    }
+  }
   await repo.titleFromFirstUserMessage(sessionId, message);
   if (userMessageId) {
     yield { event: "turn", data: { turnId, sessionId, userMessageId } };
@@ -196,7 +209,9 @@ export async function* runSessionChat(input: {
       memoryAckTexts: unacked.map((item) => item.text),
       canvasPrompt: input.canvasPrompt,
       signal,
-      sessionId
+      sessionId,
+      lookback: images.length > 0 ? undefined : input.lookback,
+      screen: screenForTurn(message, input.screen) ?? undefined
     })) {
       if (signal?.aborted) {
         break;

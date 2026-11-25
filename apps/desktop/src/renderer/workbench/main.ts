@@ -1253,6 +1253,53 @@ if (wb) {
       void addDeskFiles(files);
     }
   });
+  const bindFileDrop = (target: HTMLElement): void => {
+    let depth = 0;
+    const hasFiles = (drag: DragEvent): boolean => Boolean(drag.dataTransfer?.types.includes("Files"));
+    const clear = (): void => {
+      depth = 0;
+      target.classList.remove("is-file-drop");
+    };
+    target.addEventListener("dragenter", (event) => {
+      const drag = event as DragEvent;
+      if (!hasFiles(drag)) {
+        return;
+      }
+      drag.preventDefault();
+      depth += 1;
+      target.classList.add("is-file-drop");
+    });
+    target.addEventListener("dragover", (event) => {
+      const drag = event as DragEvent;
+      if (!hasFiles(drag)) {
+        return;
+      }
+      drag.preventDefault();
+      if (drag.dataTransfer) {
+        drag.dataTransfer.dropEffect = "copy";
+      }
+      target.classList.add("is-file-drop");
+    });
+    target.addEventListener("dragleave", () => {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) {
+        target.classList.remove("is-file-drop");
+      }
+    });
+    target.addEventListener("drop", (event) => {
+      const drag = event as DragEvent;
+      const files = drag.dataTransfer?.files;
+      clear();
+      if (!files || files.length === 0) {
+        return;
+      }
+      drag.preventDefault();
+      void addDeskFiles(files);
+    });
+    window.addEventListener("dragend", clear);
+  };
+  bindFileDrop(deskChatForm);
+  bindFileDrop(deskBoardEl);
   deskChatForm.addEventListener("submit", (event) => {
     event.preventDefault();
     void sendDeskChat();

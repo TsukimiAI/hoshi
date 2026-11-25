@@ -16,6 +16,17 @@ export interface ChatRequestBody {
   images?: Array<{ mime: string; data: string }>;
 }
 
+export interface PetScreenPutRequest {
+  sessionId?: string;
+  mime?: string;
+  data?: string;
+  hash?: string;
+}
+
+export interface PetGlanceRequest {
+  sessionId?: string;
+}
+
 export interface LlmUsage {
   promptTokens: number;
   completionTokens: number;

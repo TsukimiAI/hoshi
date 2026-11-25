@@ -80,4 +80,4 @@ pnpm dev               # 构建并启动 Electron
 
 ## 给 Agent 的说明
 
-仓库根目录 [AGENTS.md](./AGENTS.md)。工作台沙箱另有 `apps/desktop/resources/workbench/AGENTS.md`。
+仓库根目录 [AGENTS.md](./AGENTS.md)。工作台沙箱另有 `apps/desktop/resources/workbench/AGENTS.md`。桌宠看桌面的设计在 [docs/pet-screen.md](./docs/pet-screen.md)。

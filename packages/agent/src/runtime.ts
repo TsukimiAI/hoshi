@@ -6,15 +6,17 @@ import type {
   SentenceEvent,
   UsagePurpose
 } from "@hoshi/shared";
-import { addUsage } from "@hoshi/shared";
-import { toLlmMessages, userContentWithImages, mergeTimeoutSignal, isAbortTimeout, type LlmCallOptions, type LlmMessage, type StreamChatPart } from "./llm/openai";
+import { addUsage, imageOnlyUserText, isImageOnlyUserText } from "@hoshi/shared";
+import { toLlmMessages, mergeTimeoutSignal, isAbortTimeout, type LlmCallOptions, type LlmMessage, type StreamChatPart } from "./llm/openai";
+import { historyWithLookback, type ChatImagePayload } from "./chatImages";
+import { PET_SCREEN_SYSTEM_NOTE, userContentWithScreen, type PetTurnScreen } from "./petScreen/content";
 import { resolveSentenceEmotion } from "./emotion";
 import type { PersonaConfig } from "./persona";
 import { parseToolArgs } from "./plugins/parseTool";
 import type { LlmTool } from "./plugins/types";
 import { buildMemoryAckPrompt, buildMemoryInjectPrompt, type MemoryInjectLine } from "./memory/inject";
 import { buildSearchSitesPrompt, parseSiteLines, EMOTION_USAGE_PROMPT, PET_ANSWER_PROMPT } from "./searchPrompt";
-import { buildDeskCanvasGuide, buildIntegratePrompt, classifyDeskTurn, DESK_CRITIC_PROMPT, DESK_FORM_PROMPT, DESK_WEB_PROMPT, knowledgeHitLooksEmpty, knowledgeRoute, looksLikeLocalKnowledgeQuery, parseDeskCanvasChoice, parseDeskCritic, type DeskCanvasChoice } from "./retrieval/plan";
+import { buildDeskCanvasGuide, buildIntegratePrompt, classifyDeskTurn, DESK_CRITIC_PROMPT, DESK_FORM_PROMPT, DESK_WEB_PROMPT, imageTurnRetrieval, knowledgeHitLooksEmpty, knowledgeRoute, looksLikeLocalKnowledgeQuery, parseDeskCanvasChoice, parseDeskCritic, type DeskCanvasChoice } from "./retrieval/plan";
 import { updateCanvasTurn } from "./canvas/tool";
 import { formatSearchActivity, humanizeSearchNotes, looksLikeReadableProse } from "./web/notes";
 import { stripFetchPrefix } from "./web/deskRetrieve";
@@ -81,10 +83,12 @@ export class AgentRuntime {
       canvasPrompt?: string;
       signal?: AbortSignal;
       sessionId?: string;
+      lookback?: { historyIndex: number; images: ChatImagePayload[] };
+      screen?: PetTurnScreen | null;
     }
   ): AsyncGenerator<AgentEvent> {
     const images = body.images ?? [];
-    const message = body.message?.trim() || (images.length > 0 ? "（老师发来了图片）" : "");
+    const message = body.message?.trim() || (images.length > 0 ? imageOnlyUserText(images.length) : "");
     if (!message) {
       yield { event: "error", data: { message: "message is required" } };
       return;
@@ -105,11 +109,27 @@ export class AgentRuntime {
     const kbRoute = knowledgeRoute(message);
     const canvasTools = tools.filter((tool) => tool.function.name.startsWith("canvas_"));
     const sessionId = extra?.sessionId ?? body.sessionId;
+    const visualOnly = isImageOnlyUserText(message);
+    const imageRetrieval = images.length > 0 ? imageTurnRetrieval(message) : null;
     const chitchat = !desk && classifyDeskTurn(message).kind === "chitchat";
     const noteQuestion = kbRoute.kind === "summarize" || looksLikeLocalKnowledgeQuery(message);
-    const petCanSearch = !desk && !chitchat && !noteQuestion && webTools;
-    const web = desk ? message.trim().length > 0 && webTools : !chitchat && !noteQuestion;
-    const kbWanted = desk ? message.trim().length > 0 : kbRoute.kind !== "skip";
+    const petCanSearch = imageRetrieval
+      ? !desk && imageRetrieval.web && webTools
+      : !visualOnly && !desk && !chitchat && !noteQuestion && webTools;
+    const web = imageRetrieval
+      ? imageRetrieval.web && webTools
+      : visualOnly
+        ? false
+        : desk
+          ? message.trim().length > 0 && webTools
+          : !chitchat && !noteQuestion;
+    const kbWanted = imageRetrieval
+      ? imageRetrieval.knowledge
+      : visualOnly
+        ? false
+        : desk
+          ? message.trim().length > 0
+          : kbRoute.kind !== "skip";
     let modelTools = desk
       ? []
       : tools.filter((tool) => {
@@ -164,7 +184,7 @@ export class AgentRuntime {
         { role: "system", content: DESK_WEB_PROMPT },
         ...(sitePrompt ? [{ role: "system" as const, content: sitePrompt }] : []),
         ...toLlmMessages(body.history ?? []),
-        { role: "user", content: userContentWithImages(message, images) }
+        { role: "user", content: message }
       ];
       const asked: string[] = [];
       const pieces: string[] = [];
@@ -362,7 +382,7 @@ export class AgentRuntime {
     if (extra?.canvasPrompt) {
       promptMessages.push({ role: "system", content: extra.canvasPrompt });
     }
-    if (desk && searchQuestion) {
+    if (desk && searchQuestion && !visualOnly) {
       promptMessages.push({
         role: "system",
         content: `结合上下文，这一轮要查的是：${searchQuestion}`
@@ -389,12 +409,19 @@ export class AgentRuntime {
         content: canvasGuide
       });
     }
-    promptMessages.push(...(body.history ?? []));
-    const messages: LlmMessage[] = toLlmMessages(promptMessages);
-    messages.push({
-      role: "user",
-      content: userContentWithImages(message, images)
-    });
+    const lookback = images.length > 0 ? null : extra?.lookback ?? null;
+    const screen = extra?.screen ?? null;
+    if (screen) {
+      promptMessages.push({ role: "system", content: PET_SCREEN_SYSTEM_NOTE });
+    }
+    const messages: LlmMessage[] = [
+      ...toLlmMessages(promptMessages),
+      ...historyWithLookback(body.history ?? [], lookback),
+      {
+        role: "user",
+        content: userContentWithScreen(message, images, screen)
+      }
+    ];
 
     let speakMessages = messages;
     let canvasPlaced = false;
@@ -642,8 +669,9 @@ export class AgentRuntime {
           role: "system",
           content: `画布已经写好。这一轮要查的是：${searchQuestion}。用一两句中文概括已经落到画布上的要点，让老师去看卡片。禁止说「我先查一下」。禁止说没有查、不用查、没法上网。`
         },
-        ...(body.history ?? []),
-        { role: "user", content: userContentWithImages(message, images) }
+        ...(extra?.screen ? [{ role: "system" as const, content: PET_SCREEN_SYSTEM_NOTE }] : []),
+        ...(historyWithLookback(body.history ?? [], images.length > 0 ? null : extra?.lookback ?? null)),
+        { role: "user", content: userContentWithScreen(message, images, extra?.screen) }
       ];
     }
     if (!desk && webSearched) {

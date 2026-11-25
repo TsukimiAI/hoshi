@@ -80,6 +80,7 @@ export type DeskMessage = {
   id: string;
   role: "system" | "user" | "assistant";
   content: string;
+  imageCount?: number;
 };
 export type DeskCanvasItem = {
   id: string;
@@ -114,6 +115,8 @@ export type DeskTurn = {
   title: string;
   open: boolean;
   steps: DeskStep[];
+  imageCount?: number;
+  previews?: string[];
   canvasItems?: DeskCanvasItem[];
 };
 export type LayoutNode = {
@@ -264,6 +267,10 @@ export type WorkbenchApi = {
   createSession: (title?: string, kind?: "chat" | "desk") => Promise<DeskSession>;
   deleteSession: (sessionId: string) => Promise<void>;
   listSessionMessages: (sessionId: string) => Promise<{ session: DeskSession; messages: DeskMessage[] }>;
+  listMessageImages: (
+    sessionId: string,
+    messageId: string
+  ) => Promise<{ images: Array<{ mime: string; data: string }> }>;
   listCanvas: (sessionId: string) => Promise<{ items: DeskCanvasItem[] }>;
   listCanvasSnapshots: (sessionId: string) => Promise<{
     snapshots: Array<{

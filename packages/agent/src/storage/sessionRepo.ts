@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import type { ChatImagePayload, ChatImageStore } from "../chatImages";
 import { nowIso } from "./db";
 import {
   DEFAULT_SESSION_TITLE,
@@ -59,6 +60,7 @@ function mapMessageRow(row: Record<string, unknown>): SessionMessage {
     emotion: (row.emotion as Emotion | null) ?? null,
     createdAt: toIso(row.created_at as Date | string),
     tokenEstimate: Number(row.token_estimate ?? 0),
+    imageCount: Number(row.image_count ?? 0),
     usage: usageFromRow(row)
   };
 }
@@ -92,7 +94,10 @@ function shanghaiDayStartIso(): string {
 }
 
 export class SessionRepo {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(
+    private readonly db: DatabaseSync,
+    private readonly images?: ChatImageStore
+  ) {}
 
   async createSession(title?: string, kind: SessionKind = "chat"): Promise<SessionItem> {
     const normalizedTitle = (title?.trim() || DEFAULT_SESSION_TITLE).slice(0, SESSION_TITLE_MAX_LEN);
@@ -136,7 +141,10 @@ export class SessionRepo {
     const rows = this.db
       .prepare(
         `SELECT * FROM (
-           SELECT * FROM messages WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+           SELECT m.*, (
+             SELECT COUNT(*) FROM message_images i WHERE i.message_id = m.id
+           ) AS image_count
+           FROM messages m WHERE m.session_id = ? ORDER BY m.created_at DESC, m.id DESC LIMIT ?
          ) ORDER BY created_at ASC, id ASC`
       )
       .all(sessionId, safeLimit) as unknown as Record<string, unknown>[];
@@ -144,7 +152,53 @@ export class SessionRepo {
   }
 
   async deleteMessage(id: string): Promise<void> {
+    const row = this.db.prepare(`SELECT session_id FROM messages WHERE id = ?`).get(id) as
+      | { session_id?: string }
+      | undefined;
+    this.forgetImageRows([id]);
     this.db.prepare(`DELETE FROM messages WHERE id = ?`).run(id);
+    if (row?.session_id) {
+      this.images?.removeMessage(String(row.session_id), id);
+    }
+  }
+
+  async saveMessageImages(sessionId: string, messageId: string, images: ChatImagePayload[]): Promise<void> {
+    if (!this.images || images.length === 0) {
+      return;
+    }
+    const saved = this.images.save(sessionId, messageId, images);
+    if (saved.length !== images.length) {
+      this.images.removeMessage(sessionId, messageId);
+      throw new Error("图片没有保存下来");
+    }
+    const insert = this.db.prepare(
+      `INSERT INTO message_images (message_id, idx, mime, rel_path) VALUES (?, ?, ?, ?)`
+    );
+    for (const row of saved) {
+      insert.run(messageId, row.idx, row.mime, row.relPath);
+    }
+  }
+
+  async messageInSession(sessionId: string, messageId: string): Promise<boolean> {
+    const row = this.db
+      .prepare(`SELECT id FROM messages WHERE id = ? AND session_id = ?`)
+      .get(messageId, sessionId) as { id?: string } | undefined;
+    return Boolean(row?.id);
+  }
+
+  async readMessageImages(messageId: string): Promise<ChatImagePayload[]> {
+    const rows = this.db
+      .prepare(`SELECT rel_path FROM message_images WHERE message_id = ? ORDER BY idx ASC`)
+      .all(messageId) as unknown as Array<{ rel_path?: string }>;
+    const out: ChatImagePayload[] = [];
+    for (const row of rows) {
+      const relPath = String(row.rel_path ?? "");
+      const image = relPath ? this.images?.read(relPath) : null;
+      if (image) {
+        out.push(image);
+      }
+    }
+    return out;
   }
 
   async appendMessage(input: {
@@ -343,7 +397,16 @@ export class SessionRepo {
     if (ids.length === 0) {
       return;
     }
+    const rows = this.db
+      .prepare(`SELECT id, session_id FROM messages WHERE id IN (${placeholders(ids.length)})`)
+      .all(...ids) as unknown as Array<{ id?: string; session_id?: string }>;
+    this.forgetImageRows(ids);
     this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders(ids.length)})`).run(...ids);
+    for (const row of rows) {
+      if (row.id && row.session_id) {
+        this.images?.removeMessage(String(row.session_id), String(row.id));
+      }
+    }
   }
 
   async compactSession(input: {
@@ -370,6 +433,7 @@ export class SessionRepo {
         return false;
       }
       if (input.deleteMessageIds.length > 0) {
+        this.forgetImageRows(input.deleteMessageIds);
         this.db
           .prepare(`DELETE FROM messages WHERE id IN (${placeholders(input.deleteMessageIds.length)})`)
           .run(...input.deleteMessageIds);
@@ -392,16 +456,35 @@ export class SessionRepo {
           nowIso()
         );
       this.db.exec("COMMIT");
-      return true;
     } catch (error) {
-      this.db.exec("ROLLBACK");
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        /* 已提交或没有事务 */
+      }
       throw error;
     }
+    for (const id of input.deleteMessageIds) {
+      this.images?.removeMessage(input.sessionId, id);
+    }
+    return true;
   }
 
   async deleteSession(id: string): Promise<boolean> {
     const result = this.db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id);
+    if (result.changes > 0) {
+      this.images?.removeSession(id);
+    }
     return result.changes > 0;
+  }
+
+  private forgetImageRows(messageIds: string[]): void {
+    if (messageIds.length === 0) {
+      return;
+    }
+    this.db
+      .prepare(`DELETE FROM message_images WHERE message_id IN (${placeholders(messageIds.length)})`)
+      .run(...messageIds);
   }
 
   async titleFromFirstUserMessage(sessionId: string, message: string): Promise<void> {

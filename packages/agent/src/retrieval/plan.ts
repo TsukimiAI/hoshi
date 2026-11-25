@@ -1,3 +1,5 @@
+import { isImageOnlyUserText } from "@hoshi/shared";
+
 const LIVE_FACT =
   /天气|气温|温度|湿度|风力|风速|降雨|降水|预报|霾|台风|股价|股票|指数|行情|涨跌|汇率|黄金|新闻|头条|(?<!对)比分|赛程|赛事|战况|赛果|比赛|对阵|联赛|季后赛|世界杯|谁赢|weather|stock|nasdaq|price|news/i;
 
@@ -166,6 +168,25 @@ export function looksLikeLocalKnowledgeQuery(text: string): boolean {
     return true;
   }
   return /[里中]/.test(t) && Boolean(extractEmbeddedNoteToken(t));
+}
+
+/** 这一轮带着图片时：知识库只在明确问笔记时开，网页只在问画面以外的事时开。 */
+export function imageTurnRetrieval(message: string): { knowledge: boolean; web: boolean } {
+  const text = message.replace(/\s+/g, " ").trim();
+  if (!text || isImageOnlyUserText(text)) {
+    return { knowledge: false, web: false };
+  }
+  const route = knowledgeRoute(text);
+  const knowledge = route.kind === "summarize" || looksLikeLocalKnowledgeQuery(text);
+  const kind = classifyDeskTurn(text).kind;
+  const web =
+    kind === "live" ||
+    kind === "work" ||
+    kind === "concept" ||
+    kind === "person" ||
+    kind === "compare" ||
+    ASK_SEARCH.test(text);
+  return { knowledge, web };
 }
 
 function extractEmbeddedNoteToken(query: string): string {

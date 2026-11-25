@@ -334,3 +334,73 @@ describe("runSessionChat memory", () => {
     expect(markAcked).not.toHaveBeenCalled();
   });
 });
+
+describe("runSessionChat screen", () => {
+  it("屏幕不进用户正文和图片表", async () => {
+    const repo = repoStub([]);
+    const saveMessageImages = vi.fn(async () => undefined);
+    const screen = { mime: "image/jpeg" as const, data: "YQ==" };
+    let seen: { images?: unknown; screen?: unknown } = {};
+    const runtime = {
+      async *chat(body: { images?: unknown; message?: string }, extra?: { screen?: unknown }) {
+        seen = { images: body.images, screen: extra?.screen };
+        yield { event: "sentence" as const, data: { text: "看过了。", emotion: "normal" as const, index: 0 } };
+      }
+    };
+    for await (const _event of runSessionChat({
+      repo: { ...repo, saveMessageImages } as never,
+      memoryRepo: {
+        listUnacked: async () => [],
+        listActive: async () => [],
+        markAcked: async () => undefined,
+        retrieveForInject: async () => []
+      } as never,
+      runtime: runtime as never,
+      llm: new SilentLlm() as never,
+      chatSettings: settings(false),
+      sessionId: "s",
+      message: "这个报错什么意思",
+      history: [],
+      screen
+    })) {
+      // drain
+    }
+    expect(repo.appendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "user", content: "这个报错什么意思" })
+    );
+    expect(saveMessageImages).not.toHaveBeenCalled();
+    expect(seen.images).toEqual([]);
+    expect(seen.screen).toEqual(screen);
+  });
+
+  it("普通聊天不把屏幕送进模型", async () => {
+    const repo = repoStub([]);
+    const screen = { mime: "image/jpeg" as const, data: "YQ==" };
+    let seen: unknown = "missing";
+    const runtime = {
+      async *chat(_body: unknown, extra?: { screen?: unknown }) {
+        seen = extra?.screen ?? null;
+        yield { event: "sentence" as const, data: { text: "在的。", emotion: "normal" as const, index: 0 } };
+      }
+    };
+    for await (const _event of runSessionChat({
+      repo: repo as never,
+      memoryRepo: {
+        listUnacked: async () => [],
+        listActive: async () => [],
+        markAcked: async () => undefined,
+        retrieveForInject: async () => []
+      } as never,
+      runtime: runtime as never,
+      llm: new SilentLlm() as never,
+      chatSettings: settings(false),
+      sessionId: "s",
+      message: "句子切分还是不准",
+      history: [],
+      screen
+    })) {
+      // drain
+    }
+    expect(seen).toBeNull();
+  });
+});

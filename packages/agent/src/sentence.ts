@@ -1,7 +1,8 @@
 const TOOL_CALL_BLOCK_RE = /<tool_call\b[\s\S]*?<\/tool_call\s*>/gi;
 const TOOL_CALL_OPEN_RE = /<tool_call\b/i;
-const EMOTION_MARK = String.raw`(?:⟦[\w-]+⟧|[～~][\w-]+)`;
-const SENTENCE_END = String.raw`(?:[。！？!?\n]|…|\.{3,}|\.(?!\d))`;
+const EMOTION_MARK = String.raw`(?:⟦\s*[\w-]+\s*⟧|[～~]\s*[\w-]+)`;
+// 点号后面还连着字母或数字时是标识符、文件名或版本号，不是句号。
+const SENTENCE_END = String.raw`(?:[。！？!?\n]|…|\.{3,}|\.(?![A-Za-z0-9_]))`;
 const CONTENT_CHAR = String.raw`[^\s。！？!?….~～⟦⟧]`;
 const SENTENCE_RE = new RegExp(
   String.raw`^(\s*(?:${EMOTION_MARK}\s*)*${CONTENT_CHAR}[\s\S]*?(?:${SENTENCE_END}\s*${EMOTION_MARK}?|${EMOTION_MARK}))`
@@ -12,7 +13,7 @@ export function stripToolCallBlocks(text: string): string {
 }
 
 export function hasSpeechContent(text: string): boolean {
-  return /[\p{L}\p{N}]/u.test(text.replace(/⟦[\w-]+⟧|[～~][\w-]+/g, ""));
+  return /[\p{L}\p{N}]/u.test(text.replace(/⟦[^⟧]*⟧|[～~]\s*[\w-]+/g, ""));
 }
 
 function openToolCallIndex(text: string): number {
@@ -42,7 +43,7 @@ export class SentenceSplitter {
         break;
       }
       const rest = this.buffer.slice(match[1].length);
-      if (!rest && !/(?:⟦[\w-]+⟧|[～~][\w-]+)\s*$/.test(match[1])) {
+      if (!rest && !/(?:⟦\s*[\w-]+\s*⟧|[～~]\s*[\w-]+)\s*$/.test(match[1])) {
         break;
       }
       const sentence = match[1].trim();

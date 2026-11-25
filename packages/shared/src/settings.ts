@@ -79,6 +79,10 @@ export interface KnowledgeSettings {
   rerank: KnowledgeRerankSettings;
 }
 
+export interface ScreenSettings {
+  enabled: boolean;
+}
+
 export interface HoshiSettings {
   model: ModelSettings;
   chat: ChatSettings;
@@ -86,6 +90,7 @@ export interface HoshiSettings {
   plugins: PluginSettings;
   voice: VoiceSettings;
   knowledge: KnowledgeSettings;
+  screen: ScreenSettings;
 }
 
 export interface SettingsEnvSeed {
@@ -161,6 +166,9 @@ export const DEFAULT_HOSHI_SETTINGS: HoshiSettings = {
       apiKey: "",
       model: "gte-rerank-v2"
     }
+  },
+  screen: {
+    enabled: false
   }
 };
 
@@ -257,7 +265,8 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
       },
       search: { ...DEFAULT_HOSHI_SETTINGS.knowledge.search },
       rerank: { ...DEFAULT_HOSHI_SETTINGS.knowledge.rerank }
-    }
+    },
+    screen: { ...DEFAULT_HOSHI_SETTINGS.screen }
   };
 
   if (!isRecord(stored)) {
@@ -270,6 +279,7 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
   const plugins = isRecord(stored.plugins) ? stored.plugins : {};
   const voice = isRecord(stored.voice) ? stored.voice : {};
   const knowledge = isRecord(stored.knowledge) ? stored.knowledge : {};
+  const screen = isRecord(stored.screen) ? stored.screen : {};
 
   const ttsBackendRaw = readString(voice.ttsBackend, seeded.voice.ttsBackend);
   const ttsBackend: TtsBackend = ttsBackendRaw === "gpt-sovits" ? "gpt-sovits" : "dashscope";
@@ -340,7 +350,10 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
       whisperModelPath: readString(voice.whisperModelPath, seeded.voice.whisperModelPath).trim(),
       ttsEnabled: readBoolean(voice.ttsEnabled, seeded.voice.ttsEnabled)
     },
-    knowledge: resolveKnowledge(knowledge, seeded.knowledge)
+    knowledge: resolveKnowledge(knowledge, seeded.knowledge),
+    screen: {
+      enabled: readBoolean(screen.enabled, seeded.screen.enabled)
+    }
   };
 }
 

@@ -28,6 +28,7 @@ export interface SessionMessage {
   emotion: Emotion | null;
   createdAt: string;
   tokenEstimate: number;
+  imageCount: number;
   usage?: LlmUsage;
 }
 

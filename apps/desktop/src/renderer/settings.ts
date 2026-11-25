@@ -51,6 +51,9 @@ type FormSettings = {
     search: { topK: number; minScore: number; contextBudgetChars: number; queryRewrite: "off" | "rewrite" | "multi" };
     rerank: { enabled: boolean; baseUrl: string; apiKey: string; model: string };
   };
+  screen: {
+    enabled: boolean;
+  };
 };
 
 type PluginMarketItem = {
@@ -468,6 +471,10 @@ async function bootstrapSettings() {
     setText("gsvPromptLang", settings.voice.gsvPromptLang);
     setText("gsvGptWeights", settings.voice.gsvGptWeights);
     setText("gsvSovitsWeights", settings.voice.gsvSovitsWeights);
+    const screenEnabled = document.getElementById("screenEnabled") as HTMLInputElement | null;
+    if (screenEnabled) {
+      screenEnabled.checked = settings.screen.enabled === true;
+    }
     const asr = settings.voice.asrBackend === "whisper" ? "whisper" : "dashscope";
     const asrRadio = document.querySelector(
       `input[name="asrBackend"][value="${asr}"]`
@@ -703,6 +710,9 @@ async function bootstrapSettings() {
             apiKey: lastSettings?.knowledge.rerank.apiKey ?? "",
             model: text("kbRerankModel").trim() || "gte-rerank-v2"
           }
+        },
+        screen: {
+          enabled: checkbox("screenEnabled", lastSettings?.screen.enabled ?? false)
         }
       };
       const saved = await hoshi.saveSettings(payload);

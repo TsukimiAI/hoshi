@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatSettings, LlmUsage } from "@hoshi/shared";
 import type { OpenAiCompatClient } from "./llm/openai";
+import { findImageLookback, type ImageLookback } from "./chatImages";
 import { estimateTokenCount, SessionRepo } from "./storage/sessionRepo";
 
 const RECENT_RATIO = 0.7;
@@ -53,6 +54,7 @@ export async function llmCompactSummary(
 export interface SessionContext {
   history: ChatMessage[];
   compactUsage?: LlmUsage;
+  lookback?: ImageLookback;
 }
 
 export async function buildSessionContext(
@@ -83,7 +85,8 @@ export async function buildSessionContext(
     const keep = allMessages.slice(allMessages.length - chat.compactKeepRecent);
     const compactLines = compactable.map((message) => {
       const text = message.content.replace(/\s+/g, " ").trim().slice(0, 140);
-      return `${message.role}: ${text}`;
+      const mark = message.imageCount > 0 ? "（附图片）" : "";
+      return `${message.role}: ${text}${mark}`;
     });
     const compactResult = await llmCompactSummary(llm, session.summaryText, compactLines, sessionId);
     const nextSummary = compactResult.text;
@@ -124,8 +127,10 @@ export async function buildSessionContext(
     chosen.push(item);
   }
   chosen.reverse();
+  const lookback = findImageLookback(chosen, summaryMessage.length);
   return {
     history: [...summaryMessage, ...SessionRepo.toPromptHistory(chosen)],
-    compactUsage
+    compactUsage,
+    ...(lookback ? { lookback } : {})
   };
 }

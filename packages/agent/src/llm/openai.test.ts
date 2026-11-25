@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseUsage } from "@hoshi/shared";
-import { buildChatCompletionBody, isAbortTimeout } from "./openai";
+import { buildChatCompletionBody, isAbortTimeout, sanitizeChatImages } from "./openai";
 
 describe("buildChatCompletionBody", () => {
   it("始终带 enable_search", () => {
@@ -83,5 +83,15 @@ describe("isAbortTimeout", () => {
     error.name = "TimeoutError";
     expect(isAbortTimeout(error)).toBe(true);
     expect(isAbortTimeout(new Error("boom"))).toBe(false);
+  });
+});
+
+describe("sanitizeChatImages", () => {
+  it("image/jpg 归一成 jpeg，超长或不支持的类型丢掉", () => {
+    expect(sanitizeChatImages([{ mime: "image/jpg", data: "YQ==" }])).toEqual([
+      { mime: "image/jpeg", data: "YQ==" }
+    ]);
+    expect(sanitizeChatImages([{ mime: "image/png", data: "a".repeat(1_800_001) }])).toEqual([]);
+    expect(sanitizeChatImages([{ mime: "image/svg+xml", data: "YQ==" }])).toEqual([]);
   });
 });

@@ -4,6 +4,7 @@ import type {
   CanvasItem,
   CanvasSnapshotListResponse,
   Emotion,
+  PetScreenShot,
   HoshiSettings,
   KnowledgeChunkItem,
   KnowledgeCollection,
@@ -33,6 +34,7 @@ interface RendererConfig {
 }
 
 let activeController: AbortController | null = null;
+let glanceController: AbortController | null = null;
 let transcribeController: AbortController | null = null;
 let voiceWs: WebSocket | null = null;
 let ttsWs: WebSocket | null = null;
@@ -152,6 +154,9 @@ const hoshiApi = {
   },
   async setIgnoreMouseEvents(ignore: boolean) {
     await ipcRenderer.invoke("hoshi:set-ignore-mouse-events", ignore);
+  },
+  onPetMouseReset(handler: () => void) {
+    ipcRenderer.on("hoshi:pet-mouse-reset", () => handler());
   },
   async moveWindowBy(dx: number, dy: number) {
     await ipcRenderer.invoke("hoshi:move-window-by", dx, dy);
@@ -570,6 +575,56 @@ const hoshiApi = {
   async exportDb() {
     return (await ipcRenderer.invoke("hoshi:export-db")) as { ok: boolean; path?: string };
   },
+  async captureScreen() {
+    return (await ipcRenderer.invoke("hoshi:capture-screen")) as PetScreenShot;
+  },
+  async setScreenExcluded(on: boolean) {
+    return (await ipcRenderer.invoke("hoshi:set-screen-excluded", on)) as { ok: boolean };
+  },
+  async putPetScreen(payload: { sessionId: string; mime: string; data: string; hash: string }) {
+    const config = await hoshiApi.getConfig();
+    const response = await fetch(`${config.agentBaseUrl}/v1/pet/screen`, {
+      method: "POST",
+      headers: agentHeaders(config, { "Content-Type": "application/json" }),
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      throw new Error(body?.message || `screen upload failed: ${response.status}`);
+    }
+    return (await response.json()) as { ok: true; stored: boolean };
+  },
+  async glance(sessionId: string, onEvent: (event: AgentEvent) => void) {
+    glanceController?.abort();
+    glanceController = new AbortController();
+    const config = await hoshiApi.getConfig();
+    const response = await fetch(`${config.agentBaseUrl}/v1/pet/glance`, {
+      method: "POST",
+      headers: agentHeaders(config, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ sessionId }),
+      signal: glanceController.signal
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`glance request failed: ${response.status}`);
+    }
+    const decoder = new TextDecoder();
+    const reader = response.body.getReader();
+    let pending = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      pending += decoder.decode(value, { stream: true });
+      const chunks = pending.split("\n\n");
+      pending = chunks.pop() ?? "";
+      for (const chunk of chunks) {
+        for (const event of parseSseChunk(`${chunk}\n\n`)) {
+          onEvent(event);
+        }
+      }
+    }
+  },
   async chat(
     payload: {
       message: string;
@@ -613,6 +668,16 @@ const hoshiApi = {
         }
       }
     }
+  },
+  abortGlance() {
+    glanceController?.abort();
+    glanceController = null;
+  },
+  async petScreenLimits() {
+    return (await ipcRenderer.invoke("hoshi:pet-screen-limits")) as { intervalMs: number; cooldownMs: number };
+  },
+  async petScreenUnchanged(prev: string, next: string) {
+    return (await ipcRenderer.invoke("hoshi:pet-screen-unchanged", prev, next)) as boolean;
   },
   abortChat() {
     activeController?.abort();
@@ -662,6 +727,17 @@ const hoshiApi = {
       throw new Error(`list session messages failed: ${response.status}`);
     }
     return (await response.json()) as SessionMessagesResponse;
+  },
+  async listMessageImages(sessionId: string, messageId: string) {
+    const config = await hoshiApi.getConfig();
+    const response = await fetch(
+      `${config.agentBaseUrl}/v1/sessions/${sessionId}/messages/${messageId}/images`,
+      { headers: agentHeaders(config) }
+    );
+    if (!response.ok) {
+      throw new Error(`list message images failed: ${response.status}`);
+    }
+    return (await response.json()) as { images: Array<{ mime: string; data: string }> };
   },
   async listCanvas(sessionId: string) {
     const config = await hoshiApi.getConfig();
