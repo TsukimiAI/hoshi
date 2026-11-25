@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isEmotion, PET_SCREEN, type AgentEvent, type Emotion } from "@hoshi/shared";
 import { parseSentenceEmotion } from "../emotion";
 import type { LlmMessage } from "../llm/openai";
@@ -64,6 +65,7 @@ export async function runPetGlance(input: {
     role: "assistant";
     content: string;
     emotion: Emotion;
+    intervalId?: string;
   }) => Promise<unknown>;
 }): Promise<AgentEvent[]> {
   const done: AgentEvent = { event: "done", data: { ok: true } };
@@ -126,14 +128,17 @@ export async function runPetGlance(input: {
       ),
       done
     ];
+    const intervalId = input.stillEnabled() ? randomUUID() : undefined;
     await input.appendMessage({
       sessionId: input.sessionId,
       role: "assistant",
       content: spoken,
-      emotion: decision.emotion
+      emotion: decision.emotion,
+      ...(intervalId ? { intervalId } : {})
     });
-    if (input.stillEnabled() && input.slot.read(input.sessionId, input.now)?.hash === frame.hash) {
+    if (intervalId && input.slot.read(input.sessionId, input.now)?.hash === frame.hash) {
       input.slot.markSpoken(frame.hash, input.now);
+      input.slot.beginInterval(input.sessionId, intervalId, input.now);
     }
     return events;
   } finally {

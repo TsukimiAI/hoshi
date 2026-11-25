@@ -29,6 +29,7 @@ export interface SessionMessage {
   createdAt: string;
   tokenEstimate: number;
   imageCount: number;
+  intervalId?: string | null;
   usage?: LlmUsage;
 }
 

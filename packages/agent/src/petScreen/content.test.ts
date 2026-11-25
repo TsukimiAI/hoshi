@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PET_SCREEN_TURN_NOTE, screenForTurn, userContentWithScreen } from "./content";
+import { continuesGlance, GLANCE_INTERVAL_MS, matchGlanceInterval, PET_SCREEN_TURN_NOTE, screenForTurn, userContentWithScreen } from "./content";
 
 describe("screenForTurn", () => {
   const screen = { mime: "image/jpeg" as const, data: "QQ==" };
@@ -13,6 +13,51 @@ describe("screenForTurn", () => {
   it("话里指着画面时才带上", () => {
     expect(screenForTurn("这个报错什么意思", screen)).toEqual(screen);
     expect(screenForTurn("看这个", screen)).toEqual(screen);
+  });
+});
+
+describe("matchGlanceInterval", () => {
+  const open = { id: "interval-1", sessionId: "s", at: 1_000 };
+
+  it("接话进入当前区间", () => {
+    expect(continuesGlance("你又懂了")).toBe(true);
+    expect(continuesGlance("真的吗")).toBe(true);
+    expect(
+      matchGlanceInterval({
+        enabled: true,
+        kind: "chat",
+        sessionId: "s",
+        message: "你又懂了",
+        now: 1_000,
+        open
+      })
+    ).toBe("interval-1");
+  });
+
+  it("屏幕关闭、别的会话、旧区间和普通话题都不进入", () => {
+    expect(continuesGlance("今天吃什么")).toBe(false);
+    expect(continuesGlance("帮我解释一下")).toBe(false);
+    expect(continuesGlance("看这个报错")).toBe(false);
+    const base = { kind: "chat" as const, sessionId: "s", message: "你又懂了", now: 1_000, open };
+    expect(matchGlanceInterval({ ...base, enabled: false })).toBeNull();
+    expect(matchGlanceInterval({ ...base, enabled: true, kind: "desk" })).toBeNull();
+    expect(matchGlanceInterval({ ...base, enabled: true, sessionId: "other" })).toBeNull();
+    expect(
+      matchGlanceInterval({
+        ...base,
+        enabled: true,
+        now: 2_000,
+        open: { id: "new-interval", sessionId: "s", at: 2_000 }
+      })
+    ).toBe("new-interval");
+    expect(
+      matchGlanceInterval({
+        ...base,
+        enabled: true,
+        now: 1_000 + GLANCE_INTERVAL_MS + 1
+      })
+    ).toBeNull();
+    expect(matchGlanceInterval({ ...base, enabled: true, message: "今天吃什么" })).toBeNull();
   });
 });
 

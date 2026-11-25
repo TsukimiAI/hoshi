@@ -403,4 +403,43 @@ describe("runSessionChat screen", () => {
     }
     expect(seen).toBeNull();
   });
+
+  it("看屏区间里的接话会带上画面", async () => {
+    const repo = repoStub([]);
+    const screen = { mime: "image/jpeg" as const, data: "YQ==" };
+    let seen: unknown = "missing";
+    const runtime = {
+      async *chat(_body: unknown, extra?: { screen?: unknown; glanceInterval?: boolean }) {
+        seen = extra?.screen ?? null;
+        expect(extra?.glanceInterval).toBe(true);
+        yield { event: "sentence" as const, data: { text: "肉是一般。", emotion: "normal" as const, index: 0 } };
+      }
+    };
+    for await (const _event of runSessionChat({
+      repo: repo as never,
+      memoryRepo: {
+        listUnacked: async () => [],
+        listActive: async () => [],
+        markAcked: async () => undefined,
+        retrieveForInject: async () => []
+      } as never,
+      runtime: runtime as never,
+      llm: new SilentLlm() as never,
+      chatSettings: settings(false),
+      sessionId: "s",
+      message: "你又懂了",
+      history: [],
+      screen,
+      intervalId: "iv-1"
+    })) {
+      // drain
+    }
+    expect(seen).toEqual(screen);
+    expect(repo.appendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "user", content: "你又懂了", intervalId: "iv-1" })
+    );
+    expect(repo.appendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "assistant", intervalId: "iv-1" })
+    );
+  });
 });

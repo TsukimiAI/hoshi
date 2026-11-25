@@ -1524,6 +1524,25 @@ async function bootstrap() {
     let openedTts = false;
     try {
       const sessionId = await ensureSession();
+      if (screenEnabled && trimmed) {
+        try {
+          const join = await hoshi.glanceWillJoin(sessionId, trimmed);
+          if (join) {
+            const shot = await hoshi.captureScreen();
+            if (shot.ok) {
+              await hoshi.putPetScreen({
+                sessionId,
+                mime: shot.mime,
+                data: shot.data,
+                hash: shot.hash
+              });
+              screenMemory = commitPetScreenUpload(screenMemory, { ok: true, sessionId, hash: shot.hash });
+            }
+          }
+        } catch {
+          /* 截不到就沿用槽里已有的画面 */
+        }
+      }
       if (speak) {
         openedTts = true;
         await attachTtsSocket();

@@ -594,6 +594,19 @@ const hoshiApi = {
     }
     return (await response.json()) as { ok: true; stored: boolean };
   },
+  async glanceWillJoin(sessionId: string, message: string) {
+    const config = await hoshiApi.getConfig();
+    const response = await fetch(`${config.agentBaseUrl}/v1/pet/glance-join`, {
+      method: "POST",
+      headers: agentHeaders(config, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ sessionId, message })
+    });
+    if (!response.ok) {
+      return false;
+    }
+    const body = (await response.json()) as { join?: boolean };
+    return body.join === true;
+  },
   async glance(sessionId: string, onEvent: (event: AgentEvent) => void) {
     glanceController?.abort();
     glanceController = new AbortController();

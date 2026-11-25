@@ -57,6 +57,10 @@ export interface SessionContext {
   lookback?: ImageLookback;
 }
 
+export function ordinaryMessages<T extends { intervalId?: string | null }>(messages: T[]): T[] {
+  return messages.filter((message) => !message.intervalId);
+}
+
 export async function buildSessionContext(
   repo: SessionRepo,
   sessionId: string,
@@ -67,22 +71,23 @@ export async function buildSessionContext(
   if (!session) {
     throw new Error("session not found");
   }
-  const stats = await repo.getSessionStats(sessionId);
   const allMessages = await repo.listMessages(sessionId, 400);
+  const chatMessages = ordinaryMessages(allMessages);
   const summaryTokenBudget = Math.floor(chat.contextBudget * SUMMARY_RATIO);
   const recentTokenBudget = Math.floor(chat.contextBudget * RECENT_RATIO);
   const summaryTokens = estimateTokenCount(session.summaryText);
+  const ordinaryTokens = chatMessages.reduce((sum, msg) => sum + msg.tokenEstimate, 0);
   const shouldCompact =
-    stats.messageCount > chat.compactTriggerMsgCount ||
-    stats.tokenEstimateSum > chat.compactTriggerToken ||
-    summaryTokens + allMessages.reduce((sum, msg) => sum + msg.tokenEstimate, 0) > chat.contextBudget;
+    chatMessages.length > chat.compactTriggerMsgCount ||
+    ordinaryTokens > chat.compactTriggerToken ||
+    summaryTokens + ordinaryTokens > chat.contextBudget;
 
   let compactUsage: LlmUsage | undefined;
   let triedCompact = false;
-  if (shouldCompact && allMessages.length > chat.compactKeepRecent) {
+  if (shouldCompact && chatMessages.length > chat.compactKeepRecent) {
     triedCompact = true;
-    const compactable = allMessages.slice(0, allMessages.length - chat.compactKeepRecent);
-    const keep = allMessages.slice(allMessages.length - chat.compactKeepRecent);
+    const compactable = chatMessages.slice(0, chatMessages.length - chat.compactKeepRecent);
+    const keep = chatMessages.slice(chatMessages.length - chat.compactKeepRecent);
     const compactLines = compactable.map((message) => {
       const text = message.content.replace(/\s+/g, " ").trim().slice(0, 140);
       const mark = message.imageCount > 0 ? "（附图片）" : "";
@@ -98,7 +103,7 @@ export async function buildSessionContext(
       summaryVersion: nextVersion,
       expectedVersion: session.summaryVersion,
       deleteMessageIds: compactable.map((item) => item.id),
-      beforeMessageCount: allMessages.length,
+      beforeMessageCount: chatMessages.length,
       afterMessageCount: keep.length,
       compressedTokenEstimate: compactable.reduce((sum, msg) => sum + msg.tokenEstimate, 0),
       firstCompactedMessageId: compactable[0]?.id ?? null,
@@ -115,7 +120,7 @@ export async function buildSessionContext(
     summaryText && estimateTokenCount(summaryText) <= summaryTokenBudget
       ? [{ role: "system" as const, content: `会话摘要：\n${summaryText}` }]
       : [];
-  const recentMessages = await repo.listMessages(sessionId, 240);
+  const recentMessages = ordinaryMessages(await repo.listMessages(sessionId, 240));
   const chosen = [];
   let used = 0;
   for (let i = recentMessages.length - 1; i >= 0; i -= 1) {

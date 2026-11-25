@@ -37,6 +37,7 @@ export async function* runSessionChat(input: {
   canvasPrompt?: string;
   images?: ChatRequestBody["images"];
   screen?: PetTurnScreen | null;
+  intervalId?: string | null;
   lookback?: { historyIndex: number; images: ChatImagePayload[] };
   workspace?: ChatRequestBody["workspace"];
   commitCanvas?: (input: {
@@ -62,10 +63,12 @@ export async function* runSessionChat(input: {
     images,
     workspace: input.workspace
   };
+  const intervalId = input.intervalId?.trim() || null;
   const userMessageId = await repo.appendMessage({
     sessionId,
     role: "user",
-    content: message
+    content: message,
+    ...(intervalId ? { intervalId } : {})
   });
   if (userMessageId && images.length > 0) {
     try {
@@ -96,7 +99,8 @@ export async function* runSessionChat(input: {
         sessionId,
         role: "assistant",
         content: assistantFull.trim() ? assistantFull : "已停止",
-        emotion: lastEmotion
+        emotion: lastEmotion,
+        ...(intervalId ? { intervalId } : {})
       });
     } else if (userMessageId && !assistantFull.trim()) {
       await repo.deleteMessage(userMessageId);
@@ -105,7 +109,8 @@ export async function* runSessionChat(input: {
         sessionId,
         role: "assistant",
         content: assistantFull,
-        emotion: lastEmotion
+        emotion: lastEmotion,
+        ...(intervalId ? { intervalId } : {})
       });
     }
     return true;
@@ -211,7 +216,8 @@ export async function* runSessionChat(input: {
       signal,
       sessionId,
       lookback: images.length > 0 ? undefined : input.lookback,
-      screen: screenForTurn(message, input.screen) ?? undefined
+      screen: screenForTurn(message, input.screen, Boolean(intervalId)) ?? undefined,
+      glanceInterval: Boolean(intervalId)
     })) {
       if (signal?.aborted) {
         break;
@@ -299,6 +305,7 @@ export async function* runSessionChat(input: {
     sessionId,
     role: "assistant",
     content: assistantFull,
-    emotion: lastEmotion
+    emotion: lastEmotion,
+    ...(intervalId ? { intervalId } : {})
   });
 }

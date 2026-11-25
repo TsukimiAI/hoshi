@@ -147,6 +147,7 @@ interface HoshiApi {
     data: string;
     hash: string;
   }) => Promise<{ ok: true; stored: boolean }>;
+  glanceWillJoin: (sessionId: string, message: string) => Promise<boolean>;
   glance: (sessionId: string, onEvent: (event: AgentEvent) => void) => Promise<void>;
   abortGlance: () => void;
   petScreenLimits: () => Promise<{ intervalMs: number; cooldownMs: number }>;

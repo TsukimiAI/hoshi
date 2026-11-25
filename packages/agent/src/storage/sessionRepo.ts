@@ -61,6 +61,7 @@ function mapMessageRow(row: Record<string, unknown>): SessionMessage {
     createdAt: toIso(row.created_at as Date | string),
     tokenEstimate: Number(row.token_estimate ?? 0),
     imageCount: Number(row.image_count ?? 0),
+    intervalId: row.interval_id ? String(row.interval_id) : null,
     usage: usageFromRow(row)
   };
 }
@@ -207,6 +208,7 @@ export class SessionRepo {
     content: string;
     emotion?: Emotion | null;
     usage?: LlmUsage;
+    intervalId?: string | null;
   }): Promise<string | null> {
     const content = input.content.trim();
     if (!content) {
@@ -216,8 +218,8 @@ export class SessionRepo {
     const tokenEstimate = estimateTokenCount(content);
     this.db
       .prepare(
-        `INSERT INTO messages (id, session_id, role, content, emotion, token_estimate, prompt_tokens, completion_tokens, cached_tokens, total_tokens, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO messages (id, session_id, role, content, emotion, token_estimate, prompt_tokens, completion_tokens, cached_tokens, total_tokens, created_at, interval_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -230,7 +232,8 @@ export class SessionRepo {
         input.usage?.completionTokens ?? null,
         input.usage?.cachedTokens ?? null,
         input.usage?.totalTokens ?? null,
-        nowIso()
+        nowIso(),
+        input.intervalId?.trim() || null
       );
     this.db
       .prepare(`UPDATE sessions SET updated_at = ?, last_message_at = ? WHERE id = ?`)

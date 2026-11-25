@@ -18,6 +18,9 @@ export class PetScreenSlot {
   private frame: PetScreenFrame | null = null;
   private commentedHash = "";
   private commentedAt = 0;
+  private openIntervalId = "";
+  private openIntervalSessionId = "";
+  private openIntervalAt = 0;
   private busy = false;
 
   put(input: {
@@ -72,6 +75,9 @@ export class PetScreenSlot {
     if (this.frame?.sessionId === sessionId) {
       this.frame = null;
     }
+    if (this.openIntervalSessionId === sessionId) {
+      this.clearInterval();
+    }
   }
 
   commented(): { hash: string; at: number } {
@@ -81,6 +87,31 @@ export class PetScreenSlot {
   markSpoken(hash: string, at: number): void {
     this.commentedHash = hash;
     this.commentedAt = at;
+  }
+
+  beginInterval(sessionId: string, id: string, at: number): void {
+    this.openIntervalId = id;
+    this.openIntervalSessionId = sessionId;
+    this.openIntervalAt = at;
+  }
+
+  openInterval(): { id: string; sessionId: string; at: number } | null {
+    if (!this.openIntervalId) {
+      return null;
+    }
+    return { id: this.openIntervalId, sessionId: this.openIntervalSessionId, at: this.openIntervalAt };
+  }
+
+  touchInterval(at: number): void {
+    if (this.openIntervalId) {
+      this.openIntervalAt = at;
+    }
+  }
+
+  clearInterval(): void {
+    this.openIntervalId = "";
+    this.openIntervalSessionId = "";
+    this.openIntervalAt = 0;
   }
 
   tryBegin(): boolean {

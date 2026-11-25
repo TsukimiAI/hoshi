@@ -87,6 +87,20 @@ describe("listMessages", () => {
     const messages = await repo.listMessages(session.id, 3);
     expect(messages.map((m) => m.content)).toEqual(["2", "3", "4"]);
   });
+
+  it("看屏消息单独记下 interval id", async () => {
+    const { repo } = makeRepo();
+    const session = await repo.createSession();
+    await repo.appendMessage({
+      sessionId: session.id,
+      role: "assistant",
+      content: "在看烤肉呀。",
+      intervalId: "iv-1"
+    });
+    await repo.appendMessage({ sessionId: session.id, role: "user", content: "今天吃什么" });
+    const messages = await repo.listMessages(session.id);
+    expect(messages.map((item) => item.intervalId)).toEqual(["iv-1", null]);
+  });
 });
 
 describe("getUsageSummary", () => {
