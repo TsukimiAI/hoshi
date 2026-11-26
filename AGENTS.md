@@ -21,7 +21,7 @@ pnpm monorepo：Electron 桌宠 + 工作台，本机 `@hoshi/agent` HTTP，状�
 - 一轮对话：`chatTurn.ts`（落库、记忆抽取）→ `runtime.ts`（检索、工具、流式句）。
 - 记忆：`packages/agent/src/memory/*` + `storage/memoryRepo.ts`。抽取在回复前；跳过门在 extract。
 - 知识库：`packages/agent/src/knowledge/*`。切分一段一块（空行），`CHUNK_MAX_CHARS = 720`，代码/表原子块可超上限。`search()` rerank 后 `isKnowledgeHitOnTopic`，全丢留 1 条。总结模式不滤。`expandHitContext` 与 RAGAS 基线（`eval/baseline.json` 的 context relevancy）未经要求不要改。有 `source_text` 的重建才重切；不要在启动时全库重切。
-- HTTP：只在 `packages/agent/src/server.ts` 加已有风格的路由，预加载同步暴露。禁止发明桌面没用到的 API。
+- HTTP：新路由写在对应的 `packages/agent/src/server*.ts`，仍由 `createAgentServer` 分发。预加载同步暴露。禁止发明桌面没用到的 API。
 - 库表：`storage/db.ts` 与 `storage/migrations/`。升 `DB_SCHEMA_VERSION`。
 - 工作台 UI 在 `workbench.html` 与 `src/renderer/workbench/`（ESM，import 带 `.js`）。能抽纯函数就抽，避免再摊开无关逻辑。
 - 工作台沙箱插件：遵守 `apps/desktop/resources/workbench/AGENTS.md`。禁止改拾星仓库本身来「实现」插件；用户说上线只提示点工作台「上线」。
@@ -32,7 +32,7 @@ pnpm monorepo：Electron 桌宠 + 工作台，本机 `@hoshi/agent` HTTP，状�
 - 注释只写非显然意图（中文可以）。不要空的 try/catch，不要大段注释掉的代码。
 - 只改任务需要的文件。不要顺手重构、不要改计划文件、不要提交 `.env`。
 - 渲染层：桌宠 / 设置 / 工作台是 vanilla DOM，不是 React。不要新起前端框架。
-- 密钥只走设置或环境变量（`HOSHI_*`）。日志不要打印 key。
+- 桌面密钥只走设置。`HOSHI_*` 只给 `pnpm eval:*`。日志不要打印 key。
 
 ## 验证
 

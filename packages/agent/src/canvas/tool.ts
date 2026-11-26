@@ -1,7 +1,6 @@
 import type { CanvasCardPayload, CanvasImagePayload, CanvasItem, CanvasKind, CanvasPayload } from "@hoshi/shared";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { PluginHost } from "../runtime";
-import type { LlmTool } from "../plugins/types";
+import type { LlmTool, PluginHost } from "../plugins/types";
 import type { CanvasRepo } from "../storage/canvasRepo";
 import { canonicalizeCanvasImageUrl, lookupPortraitUrl, type PortraitFetcher } from "./portrait";
 import {

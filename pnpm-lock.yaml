@@ -36,9 +36,6 @@ importers:
       '@hoshi/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      dotenv:
-        specifier: ^16.4.5
-        version: 16.6.1
       electron:
         specifier: ^35.7.5
         version: 35.7.5

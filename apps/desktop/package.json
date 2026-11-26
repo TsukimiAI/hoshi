@@ -34,7 +34,6 @@
   "dependencies": {
     "@hoshi/agent": "workspace:*",
     "@hoshi/shared": "workspace:*",
-    "dotenv": "^16.4.5",
     "electron": "^35.7.5",
     "mammoth": "^1.12.3",
     "pdfjs-dist": "3.11.174"

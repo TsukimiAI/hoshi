@@ -61,3 +61,8 @@ export interface LlmTool {
     parameters: Record<string, unknown>;
   };
 }
+
+export interface PluginHost {
+  tools(): LlmTool[];
+  execute(name: string, args: Record<string, unknown>): Promise<string>;
+}

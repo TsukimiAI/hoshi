@@ -120,6 +120,13 @@ h1 {
   font-weight: 650;
 }
 
+.section-lead {
+  margin: -6px 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 .usage-h,
 .group-label {
   margin: 14px 0 8px;
@@ -393,6 +400,10 @@ label.inline:has(input:focus-visible) {
   color: var(--muted);
 }
 
+label .field-hint {
+  margin: 0;
+}
+
 textarea.short {
   min-height: 88px;
 }
@@ -534,6 +545,19 @@ textarea.short {
   cursor: not-allowed;
 }
 
+.whisper-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.whisper-progress {
+  display: block;
+  width: 100%;
+  height: 8px;
+  margin: 0 0 12px;
+}
+
 .plugin-actions {
   display: flex;
   gap: 8px;
@@ -543,6 +567,8 @@ textarea.short {
 .plugin-actions button,
 .memory-card button,
 #download-whisper,
+#stop-whisper,
+#delete-whisper,
 #test-gsv {
   border: 1px solid #d5dcf3;
   border-radius: 999px;
@@ -556,11 +582,25 @@ textarea.short {
 .plugin-actions button:hover,
 .memory-card button:hover,
 #download-whisper:hover,
+#stop-whisper:hover,
+#delete-whisper:hover,
 #test-gsv:hover {
   background: #eef1fa;
 }
 
-#download-whisper,
+.whisper-actions #download-whisper,
+#stop-whisper,
+#delete-whisper {
+  margin-bottom: 0;
+}
+
+#download-whisper:disabled,
+#stop-whisper:disabled,
+#delete-whisper:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 #test-gsv {
   margin-bottom: 10px;
 }

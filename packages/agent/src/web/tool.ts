@@ -1,5 +1,4 @@
-import type { PluginHost } from "../runtime";
-import type { LlmTool } from "../plugins/types";
+import type { LlmTool, PluginHost } from "../plugins/types";
 import { searchDeepSeekOfficial } from "./deepseekSearch";
 import { fetchPublicPage } from "./fetchPage";
 import { mergeHitsByUrl, normalizeQueries } from "./merge";
@@ -112,30 +111,29 @@ async function searchOnce(
   return { hits: [], optionalAnswer: "", error: lastError };
 }
 
-export function resolveDeepseekSearchKey(input: {
-  deepseekApiKey: string;
-  modelApiKey: string;
-  modelBaseUrl: string;
-}): string {
-  const stored = input.deepseekApiKey.trim();
-  if (stored) {
-    return stored;
-  }
-  if (/deepseek\.com/i.test(input.modelBaseUrl) && input.modelApiKey.trim()) {
-    return input.modelApiKey.trim();
-  }
-  return "";
+export function resolveDeepseekSearchKey(input: { deepseekApiKey: string }): string {
+  return input.deepseekApiKey.trim();
 }
 
 export class WebToolHost implements PluginHost {
   private enabled = false;
 
+  private readonly search: WebSearchFn;
+
   constructor(
     private readonly getApiKey: () => string,
-    private readonly search: WebSearchFn = (query, apiKey, signal) =>
-      searchDeepSeekOfficial(query, apiKey, fetch, signal),
-    private readonly fetchPage: typeof fetchPublicPage = fetchPublicPage
-  ) {}
+    search?: WebSearchFn,
+    private readonly fetchPage: typeof fetchPublicPage = fetchPublicPage,
+    private readonly getEndpoint: () => { baseUrl: string; model: string } = () => ({
+      baseUrl: "",
+      model: ""
+    })
+  ) {
+    this.search =
+      search ??
+      ((query, apiKey, signal) =>
+        searchDeepSeekOfficial(query, apiKey, fetch, signal, this.getEndpoint()));
+  }
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
@@ -166,7 +164,7 @@ export class WebToolHost implements PluginHost {
     }
     const apiKey = this.getApiKey().trim();
     if (!apiKey) {
-      return "联网失败：缺少 DeepSeek API Key（提供方 deepseek-official）";
+      return "联网失败：缺少联网 API Key";
     }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);

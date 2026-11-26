@@ -161,8 +161,40 @@ const hoshiApi = {
   async moveWindowBy(dx: number, dy: number) {
     await ipcRenderer.invoke("hoshi:move-window-by", dx, dy);
   },
+  async whisperModelStatus() {
+    return (await ipcRenderer.invoke("hoshi:whisper-model-status")) as {
+      ready: boolean;
+      partialBytes: number;
+      residualBytes: number;
+      downloading: boolean;
+      loaded: number;
+      total: number;
+    };
+  },
   async downloadWhisperModel() {
-    return (await ipcRenderer.invoke("hoshi:download-whisper-model")) as { ok: true; path: string };
+    return (await ipcRenderer.invoke("hoshi:download-whisper-model")) as {
+      ok: true;
+      path: string;
+      skipped: boolean;
+      stopped: boolean;
+      busy: boolean;
+    };
+  },
+  async stopWhisperDownload() {
+    return (await ipcRenderer.invoke("hoshi:stop-whisper-download")) as { ok: true };
+  },
+  async deleteWhisperModel() {
+    return (await ipcRenderer.invoke("hoshi:delete-whisper-model")) as { ok: boolean; removed: number };
+  },
+  onWhisperDownloadProgress(handler: (progress: { loaded: number; total: number }) => void) {
+    const listener = (_event: unknown, payload: { loaded?: unknown; total?: unknown }) => {
+      handler({
+        loaded: Number(payload?.loaded ?? 0),
+        total: Number(payload?.total ?? 0)
+      });
+    };
+    ipcRenderer.on("hoshi:whisper-download-progress", listener);
+    return () => ipcRenderer.removeListener("hoshi:whisper-download-progress", listener);
   },
   async getSettings() {
     return (await ipcRenderer.invoke("hoshi:get-settings")) as HoshiSettings;

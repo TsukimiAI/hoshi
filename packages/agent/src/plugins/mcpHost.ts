@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import type { PluginHost } from "../runtime";
-import type { LlmTool } from "./types";
+import type { LlmTool, PluginHost } from "./types";
 
 const INIT_TIMEOUT_MS = 20_000;
 const CALL_TIMEOUT_MS = 30_000;

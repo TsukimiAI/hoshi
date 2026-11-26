@@ -1,6 +1,5 @@
 import type { CitationItem } from "@hoshi/shared";
-import type { PluginHost } from "../runtime";
-import type { LlmTool } from "../plugins/types";
+import type { LlmTool, PluginHost } from "../plugins/types";
 import { knowledgeRoute } from "../retrieval/plan";
 import type { KnowledgeSearchMode, KnowledgeService } from "./service";
 import { isKnowledgeHitOnTopic } from "./relevance";

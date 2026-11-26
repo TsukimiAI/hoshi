@@ -88,7 +88,7 @@ async function handleTts(
     if (voice.ttsBackend === "gpt-sovits") {
       await applyGsvWeights(voice);
     }
-    const ds = resolveDashscopeCreds(voice, deps.getLlm().snapshot());
+    const ds = resolveDashscopeCreds(voice);
     tts = createTtsEngine(
       voice,
       ds,

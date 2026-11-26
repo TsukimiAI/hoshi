@@ -1,5 +1,4 @@
-import type { PluginHost } from "../runtime";
-import type { LlmTool } from "./types";
+import type { LlmTool, PluginHost } from "./types";
 
 export class CompositePluginHost implements PluginHost {
   constructor(private readonly hosts: PluginHost[]) {}
