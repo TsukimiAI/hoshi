@@ -57,11 +57,11 @@ export class PetScreenSlot {
     return { ok: true, stored: true };
   }
 
-  read(sessionId: string, now: number): PetScreenFrame | null {
+  read(sessionId: string, now: number, ignoreTtl = false): PetScreenFrame | null {
     if (!this.frame || this.frame.sessionId !== sessionId) {
       return null;
     }
-    if (now - this.frame.at > PET_SCREEN.frameTtlMs) {
+    if (!ignoreTtl && now - this.frame.at > PET_SCREEN.frameTtlMs) {
       return null;
     }
     return this.frame;
@@ -133,11 +133,12 @@ export function freshPetScreen(input: {
   sessionId: string;
   now: number;
   slot: PetScreenSlot;
+  ignoreTtl?: boolean;
 }): { mime: "image/jpeg"; data: string } | null {
   if (!input.enabled || input.kind !== "chat") {
     return null;
   }
-  const frame = input.slot.read(input.sessionId, input.now);
+  const frame = input.slot.read(input.sessionId, input.now, input.ignoreTtl === true);
   if (!frame) {
     return null;
   }

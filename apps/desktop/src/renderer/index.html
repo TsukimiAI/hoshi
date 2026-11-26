@@ -25,7 +25,8 @@
         <aside id="dock" class="dock-hidden" aria-hidden="true">
           <section id="session-panel" class="dock-panel hidden">
             <div id="session-header">
-              <button id="new-session-btn" type="button">新建会话</button>
+              <span>会话</span>
+              <button id="new-session-btn" type="button">新建</button>
             </div>
             <div id="sessions-list"></div>
           </section>
@@ -33,11 +34,13 @@
           <div id="pet-attach-row" hidden></div>
           <form id="chat-form">
             <input id="pet-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden />
-            <button id="pet-attach-btn" type="button" title="添加图片">图</button>
-            <input id="chat-input" type="text" placeholder="和星奈说点什么…" />
-            <button id="ptt-btn" type="button">按住说话</button>
-            <button id="live-btn" type="button">实时</button>
-            <button id="send-btn" type="submit">发送</button>
+            <textarea id="chat-input" rows="1" placeholder="和星奈说点什么…"></textarea>
+            <div id="chat-bar">
+              <button id="pet-attach-btn" type="button" title="添加图片">图</button>
+              <button id="ptt-btn" type="button">按住说话</button>
+              <button id="live-btn" type="button">实时</button>
+              <button id="send-btn" type="submit">发送</button>
+            </div>
           </form>
           <div id="status-row"><span id="status">就绪</span></div>
           <div id="pet-drop-hint">松开以上传图片</div>

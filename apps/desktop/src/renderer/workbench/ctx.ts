@@ -125,6 +125,7 @@ export const kbImportText = document.getElementById("kb-import-text") as HTMLTex
 export const kbSearchInput = document.getElementById("kb-search-input") as HTMLInputElement;
 export const kbSearchBtn = document.getElementById("kb-search-btn") as HTMLButtonElement;
 export const kbSearchResults = document.getElementById("kb-search-results") as HTMLDivElement;
+export const kbSearchBox = document.getElementById("kb-search-box") as HTMLDivElement;
 export const deskPanel = document.getElementById("desk-panel") as HTMLDivElement;
 export const deskBoardEl = document.getElementById("desk-board") as HTMLDivElement;
 export const deskHistoryList = document.getElementById("desk-activity-list") as HTMLDivElement;

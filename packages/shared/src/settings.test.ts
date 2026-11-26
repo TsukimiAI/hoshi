@@ -103,6 +103,15 @@ describe("resolveHoshiSettings", () => {
     expect(resolveHoshiSettings({ screen: { enabled: true } }).screen.enabled).toBe(true);
   });
 
+  it("壁纸只保留开关", () => {
+    expect(resolveHoshiSettings(null).appearance).toEqual({ wallpaper: false });
+    expect(
+      resolveHoshiSettings({
+        appearance: { wallpaper: true, history: ["abc12345", "../no"] }
+      }).appearance
+    ).toEqual({ wallpaper: true });
+  });
+
   it("可关闭记忆自动写入", () => {
     expect(resolveHoshiSettings({ chat: { memoryAutoWrite: false } }).chat.memoryAutoWrite).toBe(
       false

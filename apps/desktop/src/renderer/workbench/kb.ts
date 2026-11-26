@@ -9,6 +9,7 @@ import {
   kbImportTitle,
   kbSearchBtn,
   kbSearchInput,
+  kbSearchBox,
   kbSearchResults,
   kbStatus,
   kbUrl,
@@ -41,26 +42,31 @@ function renderKbSidebar(): void {
   listEl.replaceChildren();
   for (const collection of s.kbCollections) {
     const li = document.createElement("li");
-    if (collection.id === s.kbCollectionId) {
-      li.className = "active";
-    }
+    li.className = `side-card kb-side${collection.id === s.kbCollectionId ? " active" : ""}${collection.enabled ? "" : " is-off"}`;
     li.dataset.id = collection.id;
-    const row = document.createElement("div");
-    row.className = "ws-row";
+    const top = document.createElement("div");
+    top.className = "side-card-top";
     const name = document.createElement("span");
     name.className = "ws-name";
-    name.textContent = `${collection.name} · ${collection.documentCount}`;
-    if (!collection.enabled) {
-      name.style.opacity = "0.55";
-      name.style.textDecoration = "line-through";
-    }
-    name.addEventListener("click", () => {
-      s.kbCollectionId = collection.id;
-      void renderKbPanel();
+    name.textContent = collection.name;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "item-del side-card-del";
+    del.textContent = "×";
+    del.title = "删除知识库";
+    del.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void deleteKbCollection(collection.id);
     });
+    top.append(name, del);
+    const meta = document.createElement("div");
+    meta.className = "side-card-meta";
+    const count = document.createElement("span");
+    count.textContent = `${collection.documentCount} 篇`;
     const toggle = document.createElement("button");
     toggle.type = "button";
-    toggle.className = "item-del";
+    toggle.className = "side-card-status";
     toggle.textContent = collection.enabled ? "停用" : "启用";
     toggle.title = collection.enabled ? "停用该知识库（检索时忽略）" : "启用该知识库";
     toggle.addEventListener("click", (event) => {
@@ -78,18 +84,12 @@ function renderKbSidebar(): void {
         }
       })();
     });
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "item-del";
-    del.textContent = "×";
-    del.title = "删除知识库";
-    del.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void deleteKbCollection(collection.id);
+    meta.append(count, toggle);
+    li.append(top, meta);
+    li.addEventListener("click", () => {
+      s.kbCollectionId = collection.id;
+      void renderKbPanel();
     });
-    row.append(name, toggle, del);
-    li.appendChild(row);
     listEl.appendChild(li);
   }
   if (s.kbCollections.length === 0) {
@@ -134,37 +134,42 @@ export async function refreshKb(): Promise<void> {
 export async function renderKbPanel(): Promise<void> {
   kbCollectionName.textContent =
     s.kbCollections.find((c) => c.id === s.kbCollectionId)?.name ?? "未选择知识库";
-  kbImportForm.hidden = !s.kbCollectionId;
-  kbSearchInput.disabled = !s.kbCollectionId;
-  kbSearchBtn.disabled = !s.kbCollectionId;
+  const hasCollection = Boolean(s.kbCollectionId);
+  kbImportForm.hidden = !hasCollection;
+  kbSearchBox.hidden = !hasCollection;
+  kbSearchInput.disabled = !hasCollection;
+  kbSearchBtn.disabled = !hasCollection;
   kbDocList.replaceChildren();
   if (!s.kbCollectionId || !wb) {
-    kbDocList.replaceChildren(emptyStateEl("📚", "还没有知识库：点左侧「＋ 新建」创建后，即可导入文档与测试检索"));
+    kbDocList.replaceChildren(emptyStateEl("📚", "还没有知识库。点左侧「＋ 新建」，再导入文档。"));
     return;
   }
   const data = await wb.listKbDocuments(s.kbCollectionId);
   s.kbDocuments = data.documents;
   if (s.kbDocuments.length === 0) {
-    kbDocList.replaceChildren(emptyStateEl("📄", "还没有文档，粘贴文本导入"));
+    kbDocList.replaceChildren(emptyStateEl("📄", "还没有文档。在下方粘贴、选择文件或读取链接，再点「导入」。"));
     return;
   }
   for (const doc of s.kbDocuments) {
     const li = document.createElement("li");
+    li.className = "kb-doc";
     const meta = document.createElement("div");
     meta.className = "kb-doc-meta";
+    const titleRow = document.createElement("div");
+    titleRow.className = "kb-doc-title-row";
     const title = document.createElement("span");
     title.className = "kb-doc-title";
     title.textContent = doc.title;
     const sub = document.createElement("span");
     sub.className = "kb-doc-sub";
-    sub.textContent = `${doc.chunkCount} 块 · ${kbStatusLabel(doc.status)}${doc.error ? " · " + doc.error : ""}`;
-    meta.append(title, sub);
+    sub.textContent = doc.error ? `${doc.chunkCount} 块 · ${doc.error}` : `${doc.chunkCount} 块`;
+    meta.append(titleRow, sub);
     const badge = document.createElement("span");
     badge.className = `kb-badge ${doc.status}`;
     badge.textContent = kbStatusLabel(doc.status);
     const view = document.createElement("button");
     view.type = "button";
-    view.className = "item-del";
+    view.className = "kb-ghost";
     view.textContent = "分块";
     view.addEventListener("click", (event) => {
       event.preventDefault();
@@ -173,7 +178,7 @@ export async function renderKbPanel(): Promise<void> {
     });
     const del = document.createElement("button");
     del.type = "button";
-    del.className = "item-del";
+    del.className = "kb-danger";
     del.textContent = "删除";
     del.addEventListener("click", (event) => {
       event.preventDefault();
@@ -182,7 +187,7 @@ export async function renderKbPanel(): Promise<void> {
     });
     const toggle = document.createElement("button");
     toggle.type = "button";
-    toggle.className = "item-del";
+    toggle.className = "kb-ghost";
     if (doc.status === "ready") {
       toggle.textContent = "停用";
     } else if (doc.status === "disabled") {
@@ -205,7 +210,7 @@ export async function renderKbPanel(): Promise<void> {
     if (doc.status === "failed") {
       const retry = document.createElement("button");
       retry.type = "button";
-      retry.className = "item-del";
+      retry.className = "kb-ghost";
       retry.textContent = "重试";
       retry.addEventListener("click", (event) => {
         event.preventDefault();
@@ -226,7 +231,11 @@ export async function renderKbPanel(): Promise<void> {
     } else if (doc.status === "ready" || doc.status === "disabled") {
       buttons.splice(1, 0, toggle);
     }
-    li.append(meta, badge, ...buttons);
+    titleRow.append(title, badge);
+    const actions = document.createElement("div");
+    actions.className = "kb-doc-actions";
+    actions.append(...buttons);
+    li.append(meta, actions);
     kbDocList.appendChild(li);
   }
 }
@@ -262,7 +271,7 @@ async function viewKbChunks(doc: KbDocument): Promise<void> {
     sub.textContent = `#${chunk.seq}`;
     const edit = document.createElement("button");
     edit.type = "button";
-    edit.className = "item-del";
+    edit.className = "kb-ghost";
     edit.textContent = "编辑";
     sub.appendChild(edit);
     const text = document.createElement("div");
