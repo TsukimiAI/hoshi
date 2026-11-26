@@ -46,7 +46,7 @@ async function bootstrap() {
   const newSessionBtn = document.getElementById("new-session-btn") as HTMLButtonElement;
   const replies = document.getElementById("replies") as HTMLDivElement;
   const form = document.getElementById("chat-form") as HTMLFormElement;
-  const input = document.getElementById("chat-input") as HTMLInputElement;
+  const input = document.getElementById("chat-input") as HTMLTextAreaElement;
   const petFile = document.getElementById("pet-file") as HTMLInputElement;
   const petAttachBtn = document.getElementById("pet-attach-btn") as HTMLButtonElement;
   const petAttachRow = document.getElementById("pet-attach-row") as HTMLDivElement;
@@ -1599,6 +1599,18 @@ async function bootstrap() {
     }
   };
 
+  const fitChatInput = (): void => {
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 64)}px`;
+  };
+  input.addEventListener("input", fitChatInput);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+  });
+
   form.addEventListener("submit", async (evt) => {
     evt.preventDefault();
     dropPetGlance();
@@ -1613,6 +1625,7 @@ async function bootstrap() {
     pttSpeakNext = false;
     const images = pendingImages.map(({ mime, data }) => ({ mime, data }));
     input.value = "";
+    input.style.height = "";
     pendingImages.splice(0, pendingImages.length);
     paintPetAttach();
     await runAssistantTurn(message, images, shouldSpeak, true);

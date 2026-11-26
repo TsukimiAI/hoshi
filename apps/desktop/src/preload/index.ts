@@ -274,6 +274,21 @@ const hoshiApi = {
       tokens: { bg: string; font: string; dialog: string; menu: string; sound: string };
     } | null;
   },
+  async getWallpaper() {
+    return (await ipcRenderer.invoke("hoshi:get-wallpaper")) as string;
+  },
+  async setWallpaper(dataUrl: string) {
+    return (await ipcRenderer.invoke("hoshi:set-wallpaper", dataUrl)) as { ok: true };
+  },
+  async clearWallpaper() {
+    return (await ipcRenderer.invoke("hoshi:clear-wallpaper")) as { ok: true };
+  },
+  async getWallpaperHistory() {
+    return (await ipcRenderer.invoke("hoshi:get-wallpaper-history")) as Array<{ id: string; url: string }>;
+  },
+  async useWallpaperHistory(id: string) {
+    return (await ipcRenderer.invoke("hoshi:use-wallpaper-history", id)) as { ok: true };
+  },
   async previewTheme(tokens: { bg?: string; font?: string; dialog?: string; menu?: string } | null) {
     return (await ipcRenderer.invoke("hoshi:preview-theme", tokens)) as { ok: true };
   },

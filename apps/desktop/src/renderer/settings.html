@@ -14,6 +14,7 @@
         <button class="nav-btn" type="button" data-section="memory">记忆</button>
         <button class="nav-btn" type="button" data-section="usage">用量</button>
         <button class="nav-btn" type="button" data-section="presentation">表现</button>
+        <button class="nav-btn" type="button" data-section="theme">主题</button>
         <button class="nav-btn" type="button" data-section="voice">语音</button>
         <button class="nav-btn" type="button" data-section="screen">桌面</button>
         <button class="nav-btn" type="button" data-section="knowledge">知识库</button>
@@ -23,22 +24,30 @@
         <form id="settings-form">
           <div class="section" data-section="model">
             <h1>模型配置</h1>
-            <label>API Key<input id="apiKey" type="password" autocomplete="off" /></label>
-            <label>Base URL<input id="baseUrl" type="text" /></label>
-            <label>模型名<input id="model" type="text" /></label>
+            <div class="section-card">
+              <label>API Key<input id="apiKey" type="password" autocomplete="off" /></label>
+              <label>Base URL<input id="baseUrl" type="text" /></label>
+              <label>模型名<input id="model" type="text" /></label>
+            </div>
           </div>
           <div class="section hidden" data-section="chat">
             <h1>对话配置</h1>
-            <label>上下文预算<input id="contextBudget" type="number" min="1" /></label>
-            <label>压缩 token 阈值<input id="compactTriggerToken" type="number" min="1" /></label>
-            <label>压缩消息条数<input id="compactTriggerMsgCount" type="number" min="1" /></label>
-            <label>压缩后保留最近条数<input id="compactKeepRecent" type="number" min="1" /></label>
-            <label>参考站点（一行一个）<textarea id="referenceSites" class="short" rows="4"></textarea></label>
-            <label>DeepSeek API Key（画布联网，空则在模型 Base URL 为 DeepSeek 时复用模型 Key）<input id="deepseekApiKey" type="password" autocomplete="off" /></label>
+            <div class="section-card">
+              <div class="field-grid">
+                <label>上下文预算<input id="contextBudget" type="number" min="1" /></label>
+                <label>压缩 token 阈值<input id="compactTriggerToken" type="number" min="1" /></label>
+                <label>压缩消息条数<input id="compactTriggerMsgCount" type="number" min="1" /></label>
+                <label>压缩后保留最近条数<input id="compactKeepRecent" type="number" min="1" /></label>
+              </div>
+              <label>参考站点（一行一个）<textarea id="referenceSites" class="short" rows="4"></textarea></label>
+              <label>DeepSeek API Key（画布联网，空则在模型 Base URL 为 DeepSeek 时复用模型 Key）<input id="deepseekApiKey" type="password" autocomplete="off" /></label>
+            </div>
           </div>
           <div class="section hidden" data-section="memory">
             <h1>记忆</h1>
-            <label class="plugin-toggle"><input id="memoryAutoWrite" type="checkbox" />自动写入长期记忆</label>
+            <div class="section-card">
+              <label class="plugin-toggle"><input id="memoryAutoWrite" type="checkbox" />自动写入长期记忆</label>
+            </div>
             <div id="memory-list"></div>
           </div>
           <div class="section hidden" data-section="usage">
@@ -58,73 +67,97 @@
           </div>
           <div class="section hidden" data-section="presentation">
             <h1>表现配置</h1>
-            <label>打字间隔(ms)<input id="typeCharMs" type="number" min="1" /></label>
-            <label>句间隔(ms)<input id="sentenceGapMs" type="number" min="1" /></label>
-            <label>气泡上限<input id="maxAssistantBubbles" type="number" min="1" /></label>
-            <label>淡出延迟(ms)<input id="fadeDelayMs" type="number" min="1" /></label>
-            <label>闲置收起(ms)<input id="panelIdleCloseMs" type="number" min="1" /></label>
+            <div class="section-card">
+              <div class="field-grid">
+                <label>打字间隔(ms)<input id="typeCharMs" type="number" min="1" /></label>
+                <label>句间隔(ms)<input id="sentenceGapMs" type="number" min="1" /></label>
+                <label>气泡上限<input id="maxAssistantBubbles" type="number" min="1" /></label>
+                <label>淡出延迟(ms)<input id="fadeDelayMs" type="number" min="1" /></label>
+                <label>闲置收起(ms)<input id="panelIdleCloseMs" type="number" min="1" /></label>
+              </div>
+            </div>
+          </div>
+          <div class="section hidden" data-section="theme">
+            <h1>主题</h1>
+            <div class="section-card">
+              <p class="field-hint">背景图用于设置页和工作台。上传后框选要保留的区域。</p>
+              <div id="wallpaper-preview" class="wallpaper-preview hidden"></div>
+              <div class="plugin-actions">
+                <button id="wallpaper-pick" type="button">上传背景</button>
+                <button id="wallpaper-clear" type="button">清除背景</button>
+              </div>
+              <input id="wallpaper-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+            </div>
+            <h2 class="usage-h">历史壁纸</h2>
+            <div id="wallpaper-history" class="wallpaper-history"></div>
           </div>
           <div class="section hidden" data-section="voice">
             <h1>语音</h1>
-            <label>热词（逗号分隔）<input id="hotwords" type="text" /></label>
-            <label>预编译热词 ID（可选）<input id="hotwordVocabularyId" type="text" /></label>
-            <label>百炼 API Key（语音，空则用模型）<input id="dashscopeApiKey" type="password" autocomplete="off" /></label>
-            <label>百炼 Base URL（语音，空则用模型）<input id="dashscopeBaseUrl" type="text" /></label>
-            <p class="field-hint">听（ASR）</p>
-            <div class="radio-row">
-              <label class="inline"><input type="radio" name="asrBackend" value="dashscope" />百炼 Fun-ASR</label>
-              <label class="inline"><input type="radio" name="asrBackend" value="whisper" />本机 Whisper</label>
-            </div>
-            <div id="whisper-fields" class="hidden">
-              <button id="download-whisper" type="button">下载 Whisper 模型</button>
-              <details id="whisper-paths">
-                <summary>自定义路径（选填）</summary>
-                <label>whisper-cli 路径<input id="whisperBin" type="text" placeholder="空则用内置" /></label>
-                <label>ggml 模型路径<input id="whisperModelPath" type="text" placeholder="空则用已下载模型" /></label>
-              </details>
-            </div>
-            <p class="field-hint">说（TTS）</p>
-            <label class="plugin-toggle"><input id="ttsEnabled" type="checkbox" />语音播报</label>
-            <div class="radio-row">
-              <label class="inline"><input type="radio" name="ttsBackend" value="dashscope" />百炼 CosyVoice</label>
-              <label class="inline"><input type="radio" name="ttsBackend" value="gpt-sovits" />本机 GPT-SoVITS</label>
-            </div>
-            <div id="dashscope-fields">
-              <label>TTS 模型名（填 cosyvoice-v2，不要填音色）<input id="ttsModel" type="text" placeholder="cosyvoice-v2" /></label>
-              <label>音色 voice_id（填 longxiaochun_v2）<input id="ttsVoice" type="text" placeholder="longxiaochun_v2" /></label>
-            </div>
-            <div id="gsv-fields" class="hidden">
-              <label>GPT-SoVITS 地址<input id="gsvBaseUrl" type="text" /></label>
-              <label>参考音频路径<input id="gsvRefAudioPath" type="text" /></label>
-              <label>参考文本<input id="gsvPromptText" type="text" /></label>
-              <label>参考语言<input id="gsvPromptLang" type="text" /></label>
-              <label>GPT 权重路径（可选）<input id="gsvGptWeights" type="text" /></label>
-              <label>SoVITS 权重路径（可选）<input id="gsvSovitsWeights" type="text" /></label>
-              <button id="test-gsv" type="button">测试 GPT-SoVITS</button>
+            <div class="section-card">
+              <label>热词（逗号分隔）<input id="hotwords" type="text" /></label>
+              <label>预编译热词 ID（可选）<input id="hotwordVocabularyId" type="text" /></label>
+              <label>百炼 API Key（语音，空则用模型）<input id="dashscopeApiKey" type="password" autocomplete="off" /></label>
+              <label>百炼 Base URL（语音，空则用模型）<input id="dashscopeBaseUrl" type="text" /></label>
+              <p class="group-label">听（ASR）</p>
+              <div class="radio-row">
+                <label class="inline"><input type="radio" name="asrBackend" value="dashscope" />百炼 Fun-ASR</label>
+                <label class="inline"><input type="radio" name="asrBackend" value="whisper" />本机 Whisper</label>
+              </div>
+              <div id="whisper-fields" class="hidden">
+                <button id="download-whisper" type="button">下载 Whisper 模型</button>
+                <details id="whisper-paths">
+                  <summary>自定义路径（选填）</summary>
+                  <label>whisper-cli 路径<input id="whisperBin" type="text" placeholder="空则用内置" /></label>
+                  <label>ggml 模型路径<input id="whisperModelPath" type="text" placeholder="空则用已下载模型" /></label>
+                </details>
+              </div>
+              <p class="group-label">说（TTS）</p>
+              <label class="plugin-toggle"><input id="ttsEnabled" type="checkbox" />语音播报</label>
+              <div class="radio-row">
+                <label class="inline"><input type="radio" name="ttsBackend" value="dashscope" />百炼 CosyVoice</label>
+                <label class="inline"><input type="radio" name="ttsBackend" value="gpt-sovits" />本机 GPT-SoVITS</label>
+              </div>
+              <div id="dashscope-fields">
+                <label>TTS 模型名（填 cosyvoice-v2，不要填音色）<input id="ttsModel" type="text" placeholder="cosyvoice-v2" /></label>
+                <label>音色 voice_id（填 longxiaochun_v2）<input id="ttsVoice" type="text" placeholder="longxiaochun_v2" /></label>
+              </div>
+              <div id="gsv-fields" class="hidden">
+                <label>GPT-SoVITS 地址<input id="gsvBaseUrl" type="text" /></label>
+                <label>参考音频路径<input id="gsvRefAudioPath" type="text" /></label>
+                <label>参考文本<input id="gsvPromptText" type="text" /></label>
+                <label>参考语言<input id="gsvPromptLang" type="text" /></label>
+                <label>GPT 权重路径（可选）<input id="gsvGptWeights" type="text" /></label>
+                <label>SoVITS 权重路径（可选）<input id="gsvSovitsWeights" type="text" /></label>
+                <button id="test-gsv" type="button">测试 GPT-SoVITS</button>
+              </div>
             </div>
           </div>
           <div class="section hidden" data-section="screen">
             <h1>桌面</h1>
-            <label class="plugin-toggle"><input id="screenEnabled" type="checkbox" />看着桌面</label>
+            <div class="section-card">
+              <label class="plugin-toggle"><input id="screenEnabled" type="checkbox" />看着桌面</label>
+            </div>
           </div>
           <div class="section hidden" data-section="knowledge">
             <h1>知识库</h1>
-            <label class="plugin-toggle"><input id="kbEnabled" type="checkbox" />启用知识库检索</label>
-            <label>嵌入模型名<input id="kbEmbeddingModel" type="text" placeholder="text-embedding-v4" /></label>
-            <label>嵌入 Base URL（空则用模型配置）<input id="kbEmbeddingBaseUrl" type="text" /></label>
-            <label>嵌入 API Key（空则用模型配置）<input id="kbEmbeddingApiKey" type="password" autocomplete="off" /></label>
-            <label>检索返回条数<input id="kbTopK" type="number" min="1" max="50" /></label>
-            <label>最低相似度阈值（0~1，仅作用于向量语义路）<input id="kbMinScore" type="number" min="0" max="1" step="0.1" /></label>
-            <label>查询改写
-              <select id="kbQueryRewrite">
-                <option value="off">关闭</option>
-                <option value="rewrite">改写（单查询）</option>
-                <option value="multi">多查询扩展</option>
-              </select>
-            </label>
-            <label class="plugin-toggle"><input id="kbRerankEnabled" type="checkbox" />启用重排（Rerank，提升检索精度）</label>
-            <label>重排模型名<input id="kbRerankModel" type="text" placeholder="gte-rerank-v2" /></label>
-            <p class="field-hint">更换嵌入模型（维度不同）时会自动重建索引；也可在工作台手动「重建索引」。</p>
+            <div class="section-card">
+              <label class="plugin-toggle"><input id="kbEnabled" type="checkbox" />启用知识库检索</label>
+              <label>嵌入模型名<input id="kbEmbeddingModel" type="text" placeholder="text-embedding-v4" /></label>
+              <label>嵌入 Base URL（空则用模型配置）<input id="kbEmbeddingBaseUrl" type="text" /></label>
+              <label>嵌入 API Key（空则用模型配置）<input id="kbEmbeddingApiKey" type="password" autocomplete="off" /></label>
+              <label>检索返回条数<input id="kbTopK" type="number" min="1" max="50" /></label>
+              <label>最低相似度阈值（0~1，仅作用于向量语义路）<input id="kbMinScore" type="number" min="0" max="1" step="0.1" /></label>
+              <label>查询改写
+                <select id="kbQueryRewrite">
+                  <option value="off">关闭</option>
+                  <option value="rewrite">改写（单查询）</option>
+                  <option value="multi">多查询扩展</option>
+                </select>
+              </label>
+              <label class="plugin-toggle"><input id="kbRerankEnabled" type="checkbox" />启用重排（Rerank，提升检索精度）</label>
+              <label>重排模型名<input id="kbRerankModel" type="text" placeholder="gte-rerank-v2" /></label>
+              <p class="field-hint">更换嵌入模型（维度不同）时会自动重建索引；也可在工作台手动「重建索引」。</p>
+            </div>
           </div>
           <div class="section hidden" data-section="plugins">
             <h1>插件市场</h1>
@@ -140,6 +173,19 @@
           </div>
         </form>
       </section>
+    </div>
+    <div id="crop-mask" class="crop-mask hidden">
+      <div class="crop-dialog">
+        <p>拖出要保留的区域，可移动和改边</p>
+        <div id="crop-stage" class="crop-stage">
+          <img id="crop-image" alt="" />
+          <div id="crop-box" class="crop-box" hidden></div>
+        </div>
+        <div class="plugin-actions">
+          <button id="crop-cancel" type="button">取消</button>
+          <button id="crop-ok" type="button">使用这张</button>
+        </div>
+      </div>
     </div>
     <script src="./settings.js"></script>
   </body>

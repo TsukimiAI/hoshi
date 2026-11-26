@@ -17,6 +17,7 @@ import type { LlmTool } from "./plugins/types";
 import { buildMemoryAckPrompt, buildMemoryInjectPrompt, type MemoryInjectLine } from "./memory/inject";
 import { buildSearchSitesPrompt, parseSiteLines, EMOTION_USAGE_PROMPT, PET_ANSWER_PROMPT } from "./searchPrompt";
 import { buildDeskCanvasGuide, buildIntegratePrompt, classifyDeskTurn, DESK_CRITIC_PROMPT, DESK_FORM_PROMPT, DESK_WEB_PROMPT, imageTurnRetrieval, knowledgeHitLooksEmpty, knowledgeRoute, looksLikeLocalKnowledgeQuery, parseDeskCanvasChoice, parseDeskCritic, type DeskCanvasChoice } from "./retrieval/plan";
+import { glossaryExpansions, isKnowledgeHitOnTopic, TERM_ALIASES } from "./knowledge/relevance";
 import { updateCanvasTurn } from "./canvas/tool";
 import { formatSearchActivity, humanizeSearchNotes, looksLikeReadableProse } from "./web/notes";
 import { stripFetchPrefix } from "./web/deskRetrieve";
@@ -114,17 +115,28 @@ export class AgentRuntime {
     const imageRetrieval = images.length > 0 ? imageTurnRetrieval(message) : null;
     const chitchat = !desk && classifyDeskTurn(message).kind === "chitchat";
     const noteQuestion = kbRoute.kind === "summarize" || looksLikeLocalKnowledgeQuery(message);
-    const petCanSearch = imageRetrieval
-      ? !desk && imageRetrieval.web && webTools
-      : !visualOnly && !desk && !chitchat && !noteQuestion && webTools;
-    const web = imageRetrieval
+    const glance = Boolean(extra?.glanceInterval);
+    const wantsLocalFile =
+      !desk &&
+      tools.some((tool) => tool.function.name.startsWith("mcp_")) &&
+      /\.txt|\.md|\.json|\.csv|这个文件|本地文件/.test(message);
+    const petCanSearch = wantsLocalFile || glance
+      ? false
+      : imageRetrieval
+        ? !desk && imageRetrieval.web && webTools
+        : !visualOnly && !desk && !chitchat && !noteQuestion && webTools;
+    const web = wantsLocalFile || glance
+      ? false
+      : imageRetrieval
       ? imageRetrieval.web && webTools
       : visualOnly
         ? false
         : desk
           ? message.trim().length > 0 && webTools
           : !chitchat && !noteQuestion;
-    const kbWanted = imageRetrieval
+    const kbWanted = glance
+      ? false
+      : imageRetrieval
       ? imageRetrieval.knowledge
       : visualOnly
         ? false
@@ -143,6 +155,15 @@ export class AgentRuntime {
           }
           return true;
         });
+    if (!desk && !noteQuestion) {
+      modelTools = modelTools.filter((tool) => tool.function.name !== "list_knowledge");
+    }
+    if (glance) {
+      modelTools = modelTools.filter((tool) => {
+        const name = tool.function.name;
+        return name !== "list_knowledge" && name !== "web_search" && name !== "web_fetch";
+      });
+    }
     let canvasChoice: DeskCanvasChoice = { canvas: desk && message.trim().length > 0, images: false, form: "note" };
 
     yield { event: "progress", data: { phase: "think" } };
@@ -169,7 +190,10 @@ export class AgentRuntime {
         })
         .catch((error) => (error instanceof Error ? error.message : "检索失败"));
       if (!knowledgeHitLooksEmpty(raw)) {
-        kbBody = raw;
+        const context = [...(body.history ?? []).slice(-4).map((item) => item.content), message]
+          .join("\n")
+          .trim();
+        kbBody = !desk && !noteQuestion && !knowledgeExcerptFits(context, raw) ? null : raw;
       }
     };
     const runWeb = async (): Promise<void> => {
@@ -361,11 +385,20 @@ export class AgentRuntime {
     if (petCanSearch) {
       promptMessages.push({ role: "system", content: PET_ANSWER_PROMPT });
     }
-    if (!desk && kbEnabled) {
+    if (!desk && kbEnabled && noteQuestion) {
       promptMessages.push({
         role: "system",
         content:
           "老师问知识库有哪些文件、笔记叫什么、上传过什么时，调用 list_knowledge。不要编造未列出的文件。正文检索由系统完成，禁止再调用 search_knowledge。"
+      });
+    }
+    const mcpNames = modelTools
+      .map((tool) => tool.function.name)
+      .filter((name) => name.startsWith("mcp_"));
+    if (!desk && mcpNames.length > 0) {
+      promptMessages.push({
+        role: "system",
+        content: `已接入本机 MCP，可以直接调用，不需要老师再允许：${mcpNames.join("、")}。老师要读本地文件或目录时立刻调用对应工具，不要说自己读不了，不要向老师要权限，也不要让老师把正文贴过来。只访问这些工具允许的目录。`
       });
     }
     const sitePrompt = web ? buildSearchSitesPrompt(parseSiteLines(this.referenceSites)) : null;
@@ -428,16 +461,19 @@ export class AgentRuntime {
 
     let speakMessages = messages;
     let canvasPlaced = false;
+    let mcpToolResult = "";
     if (modelTools.length > 0) {
       try {
         let pending: LlmMessage[] = messages;
         let canvasFailed = false;
         let canvasFailDetail = "";
         const maxRounds = desk ? 2 : 2;
+        let mcpReadRetry = false;
         for (let round = 0; round < maxRounds; round += 1) {
-          if (!desk && round > 0 && !canvasFailed) {
+          if (!desk && round > 0 && !canvasFailed && !mcpReadRetry) {
             break;
           }
+          mcpReadRetry = false;
           canvasFailed = false;
           canvasFailDetail = "";
           const planTimeoutMs = desk ? 0 : 18000;
@@ -465,6 +501,24 @@ export class AgentRuntime {
             ? complete.toolCalls.filter((call) => call.name.startsWith("canvas_"))
             : complete.toolCalls;
           if (toolCalls.length === 0) {
+            if (
+              !desk &&
+              round === 0 &&
+              mcpNames.length > 0 &&
+              wantsLocalFile &&
+              (complete.content ?? "").trim()
+            ) {
+              pending = [
+                ...pending,
+                { role: "assistant", content: complete.content },
+                {
+                  role: "system",
+                  content: "MCP 已启用。直接调用对应工具读取文件。"
+                }
+              ];
+              mcpReadRetry = true;
+              continue;
+            }
             if ((complete.content ?? "").trim() && body.workspace !== "desk") {
               yield {
                 event: "progress",
@@ -515,6 +569,9 @@ export class AgentRuntime {
                 canvasFailed = true;
                 canvasFailDetail = result;
               }
+            }
+            if (!desk && call.name.startsWith("mcp_") && result.trim()) {
+              mcpToolResult = [mcpToolResult, result].filter(Boolean).join("\n").slice(0, 8000);
             }
             if (!desk && (call.name === "web_search" || call.name === "web_fetch")) {
               webSearched = true;
@@ -712,38 +769,74 @@ export class AgentRuntime {
     const speakTimeoutMs = desk ? 120000 : 90000;
     let spoke = 0;
     try {
-      for await (const event of this.streamSentences(
-        speakMessages,
-        extra?.signal,
-        (usage) => {
-          turnUsage = addUsage(turnUsage, usage);
-        },
-        sessionId,
-        false,
-        speakTimeoutMs
-      )) {
-        if (event.event === "sentence") {
-          spoke += 1;
-        }
-        yield event;
-      }
-      if (extra?.signal?.aborted) {
-        return;
-      }
-      if (spoke === 0 && !(desk && canvasPlaced)) {
+      if (!desk && mcpToolResult) {
         try {
-          const rescue = await withTimeout(
+          const follow = await withTimeout(
             this.config.llm.completeChat(
               [
                 ...speakMessages,
                 {
-                  role: "user",
-                  content: "不要调用工具。用中文完整句子回答老师刚才的问题。"
+                  role: "system",
+                  content: `用中文完整句子回答。工具结果如下，按结果说，不要说老师禁止调用工具，也不要让老师把正文贴过来。\n${mcpToolResult}`
                 }
               ],
               [],
-              { timeoutMs: desk ? 45000 : 18000, enableSearch: false, purpose: "chat", sessionId }
+              { timeoutMs: 18000, enableSearch: false, purpose: "chat", sessionId }
             ),
+            20000,
+            "补答超时"
+          );
+          if (follow.usage) {
+            this.config.llm.noteUsage?.("chat", follow.usage, sessionId);
+            turnUsage = addUsage(turnUsage, follow.usage);
+          }
+          const text = (follow.content ?? "").trim();
+          if (text) {
+            for await (const event of this.emitText(text)) {
+              spoke += 1;
+              yield event;
+            }
+          }
+        } catch {
+          /* 再用口播 */
+        }
+      }
+      if (spoke === 0) {
+        for await (const event of this.streamSentences(
+          speakMessages,
+          extra?.signal,
+          (usage) => {
+            turnUsage = addUsage(turnUsage, usage);
+          },
+          sessionId,
+          false,
+          speakTimeoutMs
+        )) {
+          if (event.event === "sentence") {
+            spoke += 1;
+          }
+          yield event;
+        }
+      }
+      if (extra?.signal?.aborted) {
+        return;
+      }
+      if (spoke === 0 && !(desk && canvasPlaced) && !mcpToolResult) {
+        try {
+          const rescueMessages = [
+            ...speakMessages,
+            {
+              role: "system" as const,
+              content: "用中文完整句子回答老师刚才的问题。"
+            }
+          ];
+          const rescue = await withTimeout(
+            this.config.llm.completeChat(rescueMessages, [], {
+              timeoutMs: desk ? 45000 : 18000,
+              enableSearch: false,
+              purpose: "chat",
+              sessionId
+            }),
             desk ? 50000 : 20000,
             "补答超时"
           );
@@ -763,8 +856,9 @@ export class AgentRuntime {
         }
       }
       if (spoke === 0) {
-        const fallback =
-          webBody
+        const fallback = mcpToolResult
+          ? mcpToolResult.replace(/\s+/g, " ").trim().slice(0, 400)
+          : webBody
             ? timeoutSpeakFallback(webBody)
             : desk && canvasPlaced
               ? "画布已经更新好了，可以直接看卡片。"
@@ -1075,6 +1169,17 @@ function lastCanvasArguments(messages: LlmMessage[]): string {
     }
   }
   return "";
+}
+
+function knowledgeExcerptFits(context: string, excerpt: string): boolean {
+  if (isKnowledgeHitOnTopic(context, excerpt)) {
+    return true;
+  }
+  const expansions = new Set(glossaryExpansions(context));
+  if (expansions.size === 0) {
+    return false;
+  }
+  return TERM_ALIASES.some((item) => expansions.has(item.en) && excerpt.includes(item.zh));
 }
 
 function doneEvent(usage?: LlmUsage): AgentEvent {

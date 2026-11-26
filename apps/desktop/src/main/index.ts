@@ -1,5 +1,5 @@
 import "./registerMediaScheme";
-import { app, BrowserWindow, dialog, ipcMain, session, shell, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, session, shell, type WebContents } from "electron";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameSync, copyFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { config as loadDotenv } from "dotenv";
@@ -16,6 +16,13 @@ import {
 import { PET_SCREEN, petScreenIntervalMs, petScreenUnchanged, resolveHoshiSettings } from "@hoshi/shared";
 import { downloadWhisperModel, resolveWhisperVoice } from "./whisperAssets";
 import { loadHoshiSettings, saveHoshiSettings } from "./settingsStore";
+import {
+  listWallpaperHistory,
+  readWallpaperDataUrl,
+  removeWallpaper,
+  useWallpaperHistory,
+  writeWallpaper
+} from "./wallpaper";
 import { parseDocx } from "./docxParser";
 import { closeTtsPlayer, ensureTtsPlayer, playTtsPcm, stopTtsPlayer } from "./ttsPlayer";
 import {
@@ -382,9 +389,50 @@ async function bootstrap() {
 
   ipcMain.handle("hoshi:get-settings", () => settings);
 
+  ipcMain.handle("hoshi:get-wallpaper", () => readWallpaperDataUrl(userDataDir));
+
+  const setWallpaperEnabled = (wallpaper: boolean): void => {
+    settings = {
+      ...settings,
+      appearance: { wallpaper }
+    };
+    saveHoshiSettings(userDataDir, settings);
+    pushSettings();
+  };
+
+  ipcMain.handle("hoshi:set-wallpaper", (_event, dataUrl: unknown) => {
+    if (typeof dataUrl !== "string") {
+      throw new Error("壁纸格式无效");
+    }
+    writeWallpaper(userDataDir, dataUrl);
+    setWallpaperEnabled(true);
+    return { ok: true as const };
+  });
+
+  ipcMain.handle("hoshi:get-wallpaper-history", () => listWallpaperHistory(userDataDir));
+
+  ipcMain.handle("hoshi:use-wallpaper-history", (_event, id: unknown) => {
+    useWallpaperHistory(userDataDir, typeof id === "string" ? id : "");
+    setWallpaperEnabled(true);
+    return { ok: true as const };
+  });
+
+  ipcMain.handle("hoshi:clear-wallpaper", () => {
+    removeWallpaper(userDataDir);
+    settings = {
+      ...settings,
+      appearance: { ...settings.appearance, wallpaper: false }
+    };
+    saveHoshiSettings(userDataDir, settings);
+    pushSettings();
+    return { ok: true as const };
+  });
+
   ipcMain.handle("hoshi:save-settings", (_event, next: unknown) => {
+    const appearance = settings.appearance;
     const wasEnabled = new Set(settings.plugins.enabled);
     settings = resolveHoshiSettings(next, envSeed);
+    settings.appearance = appearance;
     settings.plugins.enabled = exclusiveThemeEnabled(pluginsDir, settings.plugins.enabled);
     for (const id of wasEnabled) {
       if (!settings.plugins.enabled.includes(id)) {
@@ -937,7 +985,14 @@ async function bootstrap() {
   });
 }
 
+function applyAppIcon(): void {
+  const icon = nativeImage.createFromPath(join(__dirname, "../resources/icon.png"));
+  if (icon.isEmpty()) return;
+  if (process.platform === "darwin") app.dock?.setIcon(icon);
+}
+
 app.whenReady().then(() => {
+  applyAppIcon();
   void bootstrap();
 });
 

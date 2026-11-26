@@ -54,6 +54,9 @@ type FormSettings = {
   screen: {
     enabled: boolean;
   };
+  appearance: {
+    wallpaper: boolean;
+  };
 };
 
 type PluginMarketItem = {
@@ -134,6 +137,11 @@ interface SettingsApi {
   updateMemory: (id: string, text: string) => Promise<MemoryItem>;
   testGsv: (baseUrl: string) => Promise<{ ok: true }>;
   downloadWhisperModel: () => Promise<{ ok: true; path: string }>;
+  getWallpaper?: () => Promise<string>;
+  setWallpaper?: (dataUrl: string) => Promise<{ ok: true }>;
+  clearWallpaper?: () => Promise<{ ok: true }>;
+  getWallpaperHistory?: () => Promise<Array<{ id: string; url: string }>>;
+  useWallpaperHistory?: (id: string) => Promise<{ ok: true }>;
 }
 
 function num(id: string): number {
@@ -286,7 +294,7 @@ function renderMemories(memories: MemoryItem[], archived: MemoryItem[]): void {
         </div>
         <div class="memory-card-actions">
           <button type="button" data-memory-save="${escapeHtml(item.id)}">保存</button>
-          <button type="button" data-memory-delete="${escapeHtml(item.id)}">删除</button>
+          <button type="button" class="memory-delete" data-memory-delete="${escapeHtml(item.id)}">删除</button>
         </div>
       </article>`;
           }
@@ -315,6 +323,10 @@ function renderMemories(memories: MemoryItem[], archived: MemoryItem[]): void {
 
 function renderPlugins(plugins: PluginMarketItem[]): void {
   const list = document.getElementById("plugin-list") as HTMLDivElement;
+  if (plugins.length === 0) {
+    list.innerHTML = `<p class="plugin-empty">暂无插件</p>`;
+    return;
+  }
   list.innerHTML = plugins
     .map((plugin) => {
       const source = plugin.source === "builtin" ? "内置" : "本地";
@@ -432,6 +444,37 @@ async function bootstrapSettings() {
   }
 
   let lastSettings: FormSettings | null = null;
+  const refreshWallpaperPreview = async (): Promise<void> => {
+    const preview = document.getElementById("wallpaper-preview");
+    if (!preview) {
+      return;
+    }
+    const url = lastSettings?.appearance.wallpaper && hoshi.getWallpaper ? await hoshi.getWallpaper() : "";
+    if (!url) {
+      preview.classList.add("hidden");
+      preview.style.backgroundImage = "";
+      return;
+    }
+    preview.classList.remove("hidden");
+    preview.style.backgroundImage = `url("${url}")`;
+  };
+  const refreshWallpaperHistory = async (): Promise<void> => {
+    const list = document.getElementById("wallpaper-history");
+    if (!list) {
+      return;
+    }
+    const items = hoshi.getWallpaperHistory ? await hoshi.getWallpaperHistory() : [];
+    if (items.length === 0) {
+      list.innerHTML = `<p class="memory-empty">暂无历史壁纸</p>`;
+      return;
+    }
+    list.innerHTML = items
+      .map(
+        (item) =>
+          `<button type="button" data-wallpaper-history="${item.id}" style="background-image:url(&quot;${item.url}&quot;)" title="使用这张"></button>`
+      )
+      .join("");
+  };
   const fill = (settings: FormSettings): void => {
     lastSettings = settings;
     setText("apiKey", settings.model.apiKey);
@@ -475,6 +518,8 @@ async function bootstrapSettings() {
     if (screenEnabled) {
       screenEnabled.checked = settings.screen.enabled === true;
     }
+    void refreshWallpaperPreview();
+    void refreshWallpaperHistory();
     const asr = settings.voice.asrBackend === "whisper" ? "whisper" : "dashscope";
     const asrRadio = document.querySelector(
       `input[name="asrBackend"][value="${asr}"]`
@@ -713,7 +758,8 @@ async function bootstrapSettings() {
         },
         screen: {
           enabled: checkbox("screenEnabled", lastSettings?.screen.enabled ?? false)
-        }
+        },
+        appearance: (await hoshi.getSettings()).appearance
       };
       const saved = await hoshi.saveSettings(payload);
       fill({
@@ -730,24 +776,47 @@ async function bootstrapSettings() {
   });
 
   const paintTheme = async (): Promise<void> => {
-    if (!hoshi.getTheme) return;
-    const theme = await hoshi.getTheme();
+    const theme = hoshi.getTheme ? await hoshi.getTheme() : null;
     const tokens = theme?.tokens;
     const root = document.documentElement;
     root.style.setProperty("--hoshi-bg", tokens?.bg || "#f4f6fb");
     root.style.setProperty("--hoshi-font", tokens?.font || '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
     root.style.setProperty("--hoshi-dialog", tokens?.dialog || "#ffffff");
     root.style.setProperty("--hoshi-menu", tokens?.menu || "#ffffff");
+    let wallpaper = "";
+    if (lastSettings?.appearance.wallpaper && hoshi.getWallpaper) {
+      wallpaper = await hoshi.getWallpaper();
+    }
+    root.style.setProperty("--hoshi-wallpaper", wallpaper ? `url("${wallpaper}")` : "none");
   };
   hoshi.onSettingsUpdated((settings) => {
     lastSettings = settings;
     void loadPlugins().catch(() => undefined);
     void paintTheme();
+    void refreshWallpaperPreview();
+    void refreshWallpaperHistory();
+  });
+  bindWallpaper(hoshi, status, () => lastSettings);
+  document.getElementById("wallpaper-history")?.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement;
+    const id = target.dataset.wallpaperHistory;
+    if (!id || !hoshi.useWallpaperHistory) {
+      return;
+    }
+    void hoshi.useWallpaperHistory(id).then(
+      () => {
+        status.textContent = "已换成这张背景";
+      },
+      (error: unknown) => {
+        status.textContent = error instanceof Error ? error.message : "换背景失败";
+      }
+    );
   });
   void paintTheme();
 
   try {
     fill(await hoshi.getSettings());
+    void paintTheme();
   } catch (error) {
     status.textContent = error instanceof Error ? error.message : "读取设置失败";
   }
@@ -761,6 +830,239 @@ async function bootstrapSettings() {
   } catch (error) {
     status.textContent = error instanceof Error ? error.message : "记忆列表读取失败";
   }
+}
+
+type CropRect = { x: number; y: number; w: number; h: number };
+type CropHandle = "new" | "move" | "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+function bindWallpaper(
+  hoshi: SettingsApi,
+  status: HTMLSpanElement,
+  current: () => FormSettings | null
+): void {
+  const pick = document.getElementById("wallpaper-pick") as HTMLButtonElement | null;
+  const clear = document.getElementById("wallpaper-clear") as HTMLButtonElement | null;
+  const file = document.getElementById("wallpaper-file") as HTMLInputElement | null;
+  const mask = document.getElementById("crop-mask");
+  const image = document.getElementById("crop-image") as HTMLImageElement | null;
+  const box = document.getElementById("crop-box") as HTMLDivElement | null;
+  const ok = document.getElementById("crop-ok") as HTMLButtonElement | null;
+  const cancel = document.getElementById("crop-cancel") as HTMLButtonElement | null;
+  if (!pick || !clear || !file || !mask || !image || !box || !ok || !cancel) {
+    return;
+  }
+  let rect: CropRect | null = null;
+  let drag: { mode: CropHandle; x: number; y: number; origin: CropRect } | null = null;
+  let objectUrl = "";
+
+  const paint = (): void => {
+    if (!rect || rect.w < 2 || rect.h < 2) {
+      box.hidden = true;
+      ok.disabled = true;
+      return;
+    }
+    box.hidden = false;
+    ok.disabled = false;
+    box.style.left = `${rect.x}px`;
+    box.style.top = `${rect.y}px`;
+    box.style.width = `${rect.w}px`;
+    box.style.height = `${rect.h}px`;
+  };
+
+  const closeCrop = (): void => {
+    mask.classList.add("hidden");
+    drag = null;
+    rect = null;
+    paint();
+    image.removeAttribute("src");
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = "";
+    }
+    file.value = "";
+  };
+
+  const point = (event: PointerEvent): { x: number; y: number } => {
+    const bounds = image.getBoundingClientRect();
+    return {
+      x: Math.min(bounds.width, Math.max(0, event.clientX - bounds.left)),
+      y: Math.min(bounds.height, Math.max(0, event.clientY - bounds.top))
+    };
+  };
+
+  const clamp = (next: CropRect): CropRect => {
+    const width = image.clientWidth;
+    const height = image.clientHeight;
+    let x = next.x;
+    let y = next.y;
+    let w = next.w;
+    let h = next.h;
+    if (w < 0) {
+      x += w;
+      w = -w;
+    }
+    if (h < 0) {
+      y += h;
+      h = -h;
+    }
+    x = Math.max(0, Math.min(x, width - 1));
+    y = Math.max(0, Math.min(y, height - 1));
+    w = Math.max(24, Math.min(w, width - x));
+    h = Math.max(24, Math.min(h, height - y));
+    return { x, y, w, h };
+  };
+
+  const handleAt = (x: number, y: number): CropHandle => {
+    if (!rect) {
+      return "new";
+    }
+    const margin = 10;
+    const right = rect.x + rect.w;
+    const bottom = rect.y + rect.h;
+    const nearL = Math.abs(x - rect.x) <= margin;
+    const nearR = Math.abs(x - right) <= margin;
+    const nearT = Math.abs(y - rect.y) <= margin;
+    const nearB = Math.abs(y - bottom) <= margin;
+    const inside = x >= rect.x && x <= right && y >= rect.y && y <= bottom;
+    if (nearT && nearL) return "nw";
+    if (nearT && nearR) return "ne";
+    if (nearB && nearL) return "sw";
+    if (nearB && nearR) return "se";
+    if (nearT && x >= rect.x && x <= right) return "n";
+    if (nearB && x >= rect.x && x <= right) return "s";
+    if (nearL && y >= rect.y && y <= bottom) return "w";
+    if (nearR && y >= rect.y && y <= bottom) return "e";
+    return inside ? "move" : "new";
+  };
+
+  pick.addEventListener("click", () => {
+    file.click();
+  });
+  file.addEventListener("change", () => {
+    const chosen = file.files?.[0];
+    if (!chosen) {
+      return;
+    }
+    if (chosen.size > 12_000_000) {
+      status.textContent = "图片太大";
+      file.value = "";
+      return;
+    }
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+    objectUrl = URL.createObjectURL(chosen);
+    rect = null;
+    paint();
+    image.onload = () => {
+      mask.classList.remove("hidden");
+    };
+    image.src = objectUrl;
+  });
+  cancel.addEventListener("click", () => {
+    closeCrop();
+  });
+  image.addEventListener("pointerdown", (event) => {
+    const at = point(event);
+    const mode = handleAt(at.x, at.y);
+    const origin = rect ?? { x: at.x, y: at.y, w: 0, h: 0 };
+    drag = { mode, x: at.x, y: at.y, origin };
+    if (mode === "new") {
+      rect = { x: at.x, y: at.y, w: 0, h: 0 };
+    }
+    image.setPointerCapture(event.pointerId);
+  });
+  image.addEventListener("pointermove", (event) => {
+    if (!drag) {
+      return;
+    }
+    const at = point(event);
+    const dx = at.x - drag.x;
+    const dy = at.y - drag.y;
+    const origin = drag.origin;
+    if (drag.mode === "new") {
+      rect = clamp({ x: origin.x, y: origin.y, w: at.x - origin.x, h: at.y - origin.y });
+    } else if (drag.mode === "move") {
+      rect = clamp({ ...origin, x: origin.x + dx, y: origin.y + dy });
+    } else {
+      let next = { ...origin };
+      if (drag.mode.includes("n")) {
+        next.y = origin.y + dy;
+        next.h = origin.h - dy;
+      }
+      if (drag.mode.includes("s")) {
+        next.h = origin.h + dy;
+      }
+      if (drag.mode.includes("w")) {
+        next.x = origin.x + dx;
+        next.w = origin.w - dx;
+      }
+      if (drag.mode.includes("e")) {
+        next.w = origin.w + dx;
+      }
+      rect = clamp(next);
+    }
+    paint();
+  });
+  const endDrag = (): void => {
+    drag = null;
+    if (rect) {
+      rect = clamp(rect);
+      paint();
+    }
+  };
+  image.addEventListener("pointerup", endDrag);
+  image.addEventListener("pointercancel", endDrag);
+  ok.addEventListener("click", () => {
+    if (!rect || !hoshi.setWallpaper) {
+      status.textContent = "壁纸保存不可用";
+      return;
+    }
+    const scaleX = image.naturalWidth / image.clientWidth;
+    const scaleY = image.naturalHeight / image.clientHeight;
+    const sx = rect.x * scaleX;
+    const sy = rect.y * scaleY;
+    const sw = rect.w * scaleX;
+    const sh = rect.h * scaleY;
+    const maxEdge = 1920;
+    const scale = Math.min(1, maxEdge / Math.max(sw, sh));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(sw * scale));
+    canvas.height = Math.max(1, Math.round(sh * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      status.textContent = "无法裁剪";
+      return;
+    }
+    ctx.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    void hoshi.setWallpaper(dataUrl).then(
+      () => {
+        status.textContent = "背景已更新";
+        closeCrop();
+      },
+      (error: unknown) => {
+        status.textContent = error instanceof Error ? error.message : "背景保存失败";
+      }
+    );
+  });
+  clear.addEventListener("click", () => {
+    if (!current()?.appearance.wallpaper) {
+      return;
+    }
+    if (!hoshi.clearWallpaper) {
+      status.textContent = "壁纸保存不可用";
+      return;
+    }
+    void hoshi.clearWallpaper().then(
+      () => {
+        status.textContent = "已清除背景";
+      },
+      (error: unknown) => {
+        status.textContent = error instanceof Error ? error.message : "清除失败";
+      }
+    );
+  });
 }
 
 void bootstrapSettings();

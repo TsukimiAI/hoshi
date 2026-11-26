@@ -1036,7 +1036,8 @@ export function createAgentServer(config: AgentServerConfig) {
                 kind: session.kind,
                 sessionId,
                 now: Date.now(),
-                slot: petSlot
+                slot: petSlot,
+                ignoreTtl: Boolean(turned.intervalId)
               }),
           intervalId: turned.intervalId,
           lookback:

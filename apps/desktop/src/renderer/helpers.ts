@@ -370,6 +370,23 @@ function confirmDeleteSession(): boolean {
   return window.confirm("确定删除该会话？");
 }
 
+const SESSION_SWIPE_PX = 64;
+let openSessionRow: HTMLElement | null = null;
+
+function setSessionSwipe(row: HTMLElement, x: number, animate: boolean): void {
+  const swipe = row.querySelector(".session-swipe");
+  if (!(swipe instanceof HTMLElement)) return;
+  swipe.style.transition = animate ? "" : "none";
+  swipe.style.transform = `translateX(${x}px)`;
+  row.classList.toggle("is-open", x < 0);
+}
+
+function closeOpenSessionRow(except?: HTMLElement): void {
+  if (!openSessionRow || openSessionRow === except) return;
+  setSessionSwipe(openSessionRow, 0, true);
+  openSessionRow = null;
+}
+
 function createSessionRow(input: {
   title: string;
   active: boolean;
@@ -379,11 +396,13 @@ function createSessionRow(input: {
   const row = document.createElement("div");
   row.className = `session-row${input.active ? " active" : ""}`;
 
+  const swipe = document.createElement("div");
+  swipe.className = "session-swipe";
+
   const button = document.createElement("button");
   button.type = "button";
   button.className = "session-item";
   button.textContent = input.title;
-  button.addEventListener("click", input.onOpen);
 
   const del = document.createElement("button");
   del.type = "button";
@@ -394,8 +413,64 @@ function createSessionRow(input: {
     input.onDelete();
   });
 
-  row.appendChild(button);
-  row.appendChild(del);
+  let pointerId = -1;
+  let startX = 0;
+  let startY = 0;
+  let origin = 0;
+  let dragged = false;
+
+  swipe.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    closeOpenSessionRow(row);
+    pointerId = event.pointerId;
+    startX = event.clientX;
+    startY = event.clientY;
+    origin = row.classList.contains("is-open") ? -SESSION_SWIPE_PX : 0;
+    dragged = false;
+  });
+  swipe.addEventListener("pointermove", (event) => {
+    if (event.pointerId !== pointerId) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (!dragged) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dy) > Math.abs(dx)) {
+        pointerId = -1;
+        return;
+      }
+      dragged = true;
+      swipe.setPointerCapture(event.pointerId);
+    }
+    const next = Math.max(-SESSION_SWIPE_PX, Math.min(0, origin + dx));
+    setSessionSwipe(row, next, false);
+  });
+  const endSwipe = (event: PointerEvent): void => {
+    if (event.pointerId !== pointerId) return;
+    pointerId = -1;
+    if (!dragged) return;
+    const dx = event.clientX - startX;
+    const next = Math.max(-SESSION_SWIPE_PX, Math.min(0, origin + dx));
+    const open = next < -SESSION_SWIPE_PX / 2;
+    setSessionSwipe(row, open ? -SESSION_SWIPE_PX : 0, true);
+    openSessionRow = open ? row : null;
+  };
+  swipe.addEventListener("pointerup", endSwipe);
+  swipe.addEventListener("pointercancel", endSwipe);
+  button.addEventListener("click", () => {
+    if (dragged) {
+      dragged = false;
+      return;
+    }
+    if (row.classList.contains("is-open")) {
+      setSessionSwipe(row, 0, true);
+      if (openSessionRow === row) openSessionRow = null;
+      return;
+    }
+    input.onOpen();
+  });
+
+  swipe.append(button, del);
+  row.appendChild(swipe);
   return row;
 }
 

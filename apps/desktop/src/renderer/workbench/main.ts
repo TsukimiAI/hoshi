@@ -102,14 +102,18 @@ import { EMOTION_KEYS, type LayoutNode, type LiveItem, type PluginTemplateKind, 
 const wb = workbenchApi;
 
 async function paintTheme(): Promise<void> {
-  if (!wb?.getTheme) return;
+  if (!wb?.getTheme || !wb.getSettings) return;
   const theme = await wb.getTheme();
+  const settings = await wb.getSettings();
+  const appearance = (settings as { appearance?: { wallpaper?: boolean } }).appearance;
   const root = document.documentElement;
-  const tokens = theme?.tokens;
-  root.style.setProperty("--hoshi-bg", tokens?.bg || "#f4f6fb");
-  root.style.setProperty("--hoshi-font", tokens?.font || '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
-  root.style.setProperty("--hoshi-dialog", tokens?.dialog || "#ffffff");
-  root.style.setProperty("--hoshi-menu", tokens?.menu || "#ffffff");
+  root.style.setProperty("--hoshi-bg", theme?.tokens?.bg || "#f4f6fb");
+  root.style.setProperty("--bg", theme?.tokens?.bg || "#f4f6fb");
+  root.style.setProperty("--hoshi-font", theme?.tokens?.font || '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif');
+  root.style.setProperty("--hoshi-dialog", theme?.tokens?.dialog || "#ffffff");
+  root.style.setProperty("--hoshi-menu", theme?.tokens?.menu || "#ffffff");
+  const wallpaper = appearance?.wallpaper && wb.getWallpaper ? await wb.getWallpaper() : "";
+  root.style.setProperty("--hoshi-wallpaper", wallpaper ? `url("${wallpaper}")` : "none");
 }
 
 function syncCreateKinds(): void {

@@ -24,6 +24,7 @@
       }
     ],
     "mac": {
+      "icon": "resources/icon.png",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "星奈需要麦克风进行语音对话",
         "NSScreenCaptureUsageDescription": "星奈需要录屏才能看着桌面聊天"

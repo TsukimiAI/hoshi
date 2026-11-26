@@ -34,6 +34,10 @@ export function parseMcpForm(): { name: string; command: string; args: string[];
   return { name, command, args, env };
 }
 
+function clearTplPick(): void {
+  mcpTemplatesEl.querySelectorAll(".mcp-tpl.is-on").forEach((el) => el.classList.remove("is-on"));
+}
+
 function fillMcpForm(input: { name?: string; command: string; args: string[]; env: Record<string, string> }): void {
   if (input.name) mcpIdInput.value = input.name;
   mcpCommandInput.value = input.command;
@@ -49,6 +53,12 @@ function mcpStatusText(row: McpServerRow): string {
   return row.lastError ? "失败" : "未连接";
 }
 
+function mcpStatusClass(row: McpServerRow): string {
+  if (!row.enabled) return "off";
+  if (row.connected) return "ok";
+  return row.lastError ? "bad" : "idle";
+}
+
 export async function refreshConnect(): Promise<void> {
   if (!wb) return;
   mcpNote.textContent = "";
@@ -59,33 +69,30 @@ export async function refreshConnect(): Promise<void> {
   }
   for (const row of servers) {
     const li = document.createElement("li");
-    const wrap = document.createElement("div");
-    wrap.className = "mcp-row";
+    li.className = "mcp-card";
+    const top = document.createElement("div");
+    top.className = "mcp-card-top";
     const meta = document.createElement("div");
     meta.className = "mcp-meta";
+    const titleRow = document.createElement("div");
+    titleRow.className = "mcp-title-row";
     const h3 = document.createElement("h3");
     h3.textContent = row.name;
-    const p = document.createElement("p");
-    p.textContent = `${mcpStatusText(row)} · ${row.command} ${row.args.join(" ")}`.trim();
-    meta.append(h3, p);
-    if (row.lastError) {
-      const err = document.createElement("p");
-      err.textContent = row.lastError;
-      meta.appendChild(err);
-    }
-    if (row.toolNames.length) {
-      const tools = document.createElement("p");
-      tools.className = "mcp-tools";
-      tools.textContent = row.toolNames.join("、");
-      meta.appendChild(tools);
-    }
-    const actions = document.createElement("div");
-    actions.className = "mcp-actions";
+    const status = document.createElement("span");
+    status.className = `mcp-status mcp-status-${mcpStatusClass(row)}`;
+    status.textContent = mcpStatusText(row);
+    titleRow.append(h3, status);
+    const cmd = document.createElement("p");
+    cmd.className = "mcp-cmd";
+    cmd.textContent = `${row.command} ${row.args.join(" ")}`.trim();
+    meta.append(titleRow, cmd);
     const toggleLabel = document.createElement("label");
-    toggleLabel.className = "card-toggle";
+    toggleLabel.className = "mcp-switch";
+    toggleLabel.title = row.enabled ? "停用" : "启用";
     const toggle = document.createElement("input");
     toggle.type = "checkbox";
     toggle.checked = row.enabled;
+    toggle.setAttribute("aria-label", row.enabled ? "停用" : "启用");
     toggle.addEventListener("change", () => {
       void wb
         ?.setMcpEnabled(row.name, toggle.checked)
@@ -95,21 +102,46 @@ export async function refreshConnect(): Promise<void> {
           showNote(error instanceof Error ? error.message : "开关失败");
         });
     });
-    toggleLabel.append(toggle, document.createTextNode("启用"));
+    toggleLabel.append(toggle);
+    top.append(meta, toggleLabel);
+    li.append(top);
+    if (row.lastError) {
+      const err = document.createElement("p");
+      err.className = "mcp-err";
+      err.textContent = row.lastError;
+      li.appendChild(err);
+    }
+    if (row.toolNames.length) {
+      const tools = document.createElement("div");
+      tools.className = "mcp-tools";
+      for (const name of row.toolNames) {
+        const chip = document.createElement("span");
+        chip.className = "mcp-tool";
+        chip.textContent = name;
+        tools.appendChild(chip);
+      }
+      li.appendChild(tools);
+    }
+    const actions = document.createElement("div");
+    actions.className = "mcp-actions";
     const edit = document.createElement("button");
     edit.type = "button";
+    edit.className = "mcp-ghost";
     edit.textContent = "填入表单";
     edit.addEventListener("click", () => {
+      clearTplPick();
       fillMcpForm(row);
     });
     const probe = document.createElement("button");
     probe.type = "button";
+    probe.className = "mcp-ghost";
     probe.textContent = "试连";
     probe.addEventListener("click", () => {
       void runMcpProbe(row);
     });
     const del = document.createElement("button");
     del.type = "button";
+    del.className = "mcp-del";
     del.textContent = "删除";
     del.addEventListener("click", () => {
       void (async () => {
@@ -119,9 +151,8 @@ export async function refreshConnect(): Promise<void> {
         showNote(error instanceof Error ? error.message : "删除失败");
       });
     });
-    actions.append(toggleLabel, edit, probe, del);
-    wrap.append(meta, actions);
-    li.appendChild(wrap);
+    actions.append(edit, probe, del);
+    li.appendChild(actions);
     mcpListEl.appendChild(li);
   }
   mcpTemplatesEl.replaceChildren();
@@ -129,12 +160,20 @@ export async function refreshConnect(): Promise<void> {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "mcp-tpl";
+    const kicker = document.createElement("span");
+    kicker.className = "mcp-tpl-kicker";
+    kicker.textContent = tpl.id;
     const h3 = document.createElement("h3");
     h3.textContent = tpl.name;
     const p = document.createElement("p");
-    p.textContent = tpl.hints ? `${tpl.description}\n${tpl.hints}` : tpl.description;
-    btn.append(h3, p);
+    p.textContent = tpl.hints ? `${tpl.description} ${tpl.hints}` : tpl.description;
+    const cmd = document.createElement("code");
+    cmd.className = "mcp-tpl-cmd";
+    cmd.textContent = [tpl.command, ...tpl.args].filter(Boolean).join(" ");
+    btn.append(kicker, h3, p, cmd);
     btn.addEventListener("click", () => {
+      clearTplPick();
+      btn.classList.add("is-on");
       fillMcpForm({ name: tpl.id, command: tpl.command, args: tpl.args, env: tpl.env });
       mcpFormErr.textContent = "";
     });
@@ -145,13 +184,18 @@ export async function refreshConnect(): Promise<void> {
 export async function runMcpProbe(server: { name: string; command: string; args: string[]; env: Record<string, string> }): Promise<void> {
   if (!wb) return;
   mcpProbeOut.hidden = false;
+  mcpProbeOut.classList.remove("is-ok", "is-bad");
   mcpProbeOut.textContent = "试连中…";
   try {
     const result = await wb.probeMcpServer(server);
+    mcpProbeOut.classList.toggle("is-ok", result.ok);
+    mcpProbeOut.classList.toggle("is-bad", !result.ok);
     mcpProbeOut.textContent = result.ok
       ? `试连成功\n${result.toolNames.join("\n") || "（无工具）"}`
       : `试连失败\n${result.error}`;
   } catch (error) {
+    mcpProbeOut.classList.remove("is-ok");
+    mcpProbeOut.classList.add("is-bad");
     mcpProbeOut.textContent = error instanceof Error ? error.message : "试连失败";
   }
 }

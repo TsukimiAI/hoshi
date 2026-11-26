@@ -84,6 +84,15 @@ describe("freshPetScreen", () => {
     expect(
       freshPetScreen({ ...base, enabled: true, kind: "chat", now: PET_SCREEN.frameTtlMs + 1 })
     ).toBeNull();
+    expect(
+      freshPetScreen({
+        ...base,
+        enabled: true,
+        kind: "chat",
+        now: PET_SCREEN.frameTtlMs + 1,
+        ignoreTtl: true
+      })
+    ).toEqual({ mime: "image/jpeg", data: "YQ==" });
   });
 });
 

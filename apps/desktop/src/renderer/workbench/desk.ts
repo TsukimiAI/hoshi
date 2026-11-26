@@ -1093,18 +1093,17 @@ export function paintDeskSessions(): void {
   listEl.replaceChildren();
   for (const session of s.deskSessions) {
     const li = document.createElement("li");
-    li.className = `desk-session${session.id === s.deskSessionId ? " active" : ""}`;
+    li.className = `side-card desk-session${session.id === s.deskSessionId ? " active" : ""}`;
+    const top = document.createElement("div");
+    top.className = "side-card-top";
     const title = document.createElement("div");
     title.className = "desk-session-title";
     title.textContent = session.title || "新会话";
-    const meta = document.createElement("div");
-    meta.className = "desk-session-meta";
-    const stamp = session.lastMessageAt || session.updatedAt;
-    meta.textContent = stamp ? stamp.slice(5, 16).replace("T", " ") : "空";
     const del = document.createElement("button");
     del.type = "button";
-    del.className = "item-del";
-    del.textContent = "删";
+    del.className = "item-del side-card-del";
+    del.textContent = "×";
+    del.title = "删除会话";
     del.addEventListener("click", (event) => {
       event.stopPropagation();
       void (async () => {
@@ -1113,7 +1112,12 @@ export function paintDeskSessions(): void {
         await refreshDesk();
       })();
     });
-    li.append(title, meta, del);
+    top.append(title, del);
+    const meta = document.createElement("div");
+    meta.className = "desk-session-meta";
+    const stamp = session.lastMessageAt || session.updatedAt;
+    meta.textContent = stamp ? stamp.slice(5, 16).replace("T", " ") : "空";
+    li.append(top, meta);
     li.addEventListener("click", () => {
       s.deskSessionId = session.id;
       s.deskViewingTurnId = null;

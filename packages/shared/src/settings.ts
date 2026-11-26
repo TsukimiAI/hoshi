@@ -83,6 +83,10 @@ export interface ScreenSettings {
   enabled: boolean;
 }
 
+export interface AppearanceSettings {
+  wallpaper: boolean;
+}
+
 export interface HoshiSettings {
   model: ModelSettings;
   chat: ChatSettings;
@@ -91,6 +95,7 @@ export interface HoshiSettings {
   voice: VoiceSettings;
   knowledge: KnowledgeSettings;
   screen: ScreenSettings;
+  appearance: AppearanceSettings;
 }
 
 export interface SettingsEnvSeed {
@@ -169,6 +174,9 @@ export const DEFAULT_HOSHI_SETTINGS: HoshiSettings = {
   },
   screen: {
     enabled: false
+  },
+  appearance: {
+    wallpaper: false
   }
 };
 
@@ -266,7 +274,8 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
       search: { ...DEFAULT_HOSHI_SETTINGS.knowledge.search },
       rerank: { ...DEFAULT_HOSHI_SETTINGS.knowledge.rerank }
     },
-    screen: { ...DEFAULT_HOSHI_SETTINGS.screen }
+    screen: { ...DEFAULT_HOSHI_SETTINGS.screen },
+    appearance: { ...DEFAULT_HOSHI_SETTINGS.appearance }
   };
 
   if (!isRecord(stored)) {
@@ -280,6 +289,7 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
   const voice = isRecord(stored.voice) ? stored.voice : {};
   const knowledge = isRecord(stored.knowledge) ? stored.knowledge : {};
   const screen = isRecord(stored.screen) ? stored.screen : {};
+  const appearance = isRecord(stored.appearance) ? stored.appearance : {};
 
   const ttsBackendRaw = readString(voice.ttsBackend, seeded.voice.ttsBackend);
   const ttsBackend: TtsBackend = ttsBackendRaw === "gpt-sovits" ? "gpt-sovits" : "dashscope";
@@ -353,6 +363,9 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
     knowledge: resolveKnowledge(knowledge, seeded.knowledge),
     screen: {
       enabled: readBoolean(screen.enabled, seeded.screen.enabled)
+    },
+    appearance: {
+      wallpaper: readBoolean(appearance.wallpaper, seeded.appearance.wallpaper)
     }
   };
 }

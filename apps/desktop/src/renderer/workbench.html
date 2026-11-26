@@ -105,22 +105,30 @@
         </div>
         <p id="shop-hint" hidden>已上线模组：卡面预览、说明、开关、卸载。工具请用连接页。</p>
         <div id="connect-panel" hidden>
-          <div id="connect-head">
-            <span>连接器</span>
+          <header id="connect-head">
+            <div class="connect-head-text">
+              <h1 class="connect-title">连接</h1>
+              <p class="editor-hint">用模版或表单直连外部 MCP。环境变量明文保存在本机 mcp.json，不要提交到仓库。</p>
+            </div>
             <button id="mcp-reveal-btn" type="button">打开配置文件</button>
-          </div>
-          <p class="editor-hint">用模版或表单直连外部 MCP。环境变量明文保存在本机 mcp.json，不要提交到仓库。</p>
+          </header>
           <p id="mcp-note" class="editor-hint"></p>
-          <ul id="mcp-list"></ul>
-          <h2 class="ed-title">连接模版</h2>
-          <div id="mcp-templates"></div>
-          <h2 class="ed-title">添加连接器</h2>
+          <section class="connect-block">
+            <h2 class="ed-title">已添加</h2>
+            <ul id="mcp-list"></ul>
+          </section>
+          <section class="connect-block">
+            <h2 class="ed-title">连接模版</h2>
+            <p class="editor-hint connect-sub">点选模版会填入下方表单，确认后再连接。</p>
+            <div id="mcp-templates"></div>
+          </section>
           <form id="mcp-form">
+            <h2 class="ed-title">添加连接器</h2>
             <div class="form-grid">
-              <label>id<input id="mcp-id" type="text" placeholder="字母数字 _ -" /></label>
-              <label>command<input id="mcp-command" type="text" placeholder="npx" /></label>
-              <label class="full">args（每行一项）<textarea id="mcp-args" rows="3" placeholder="-y&#10;@modelcontextprotocol/server-everything"></textarea></label>
-              <label class="full">env（KEY=value，明文）<textarea id="mcp-env" rows="3" placeholder="API_KEY="></textarea></label>
+              <label>标识<input id="mcp-id" type="text" placeholder="字母数字 _ -" /></label>
+              <label>命令<input id="mcp-command" type="text" placeholder="npx" /></label>
+              <label class="full">参数（每行一项）<textarea id="mcp-args" rows="3" placeholder="-y&#10;@modelcontextprotocol/server-everything"></textarea></label>
+              <label class="full">环境变量（KEY=value，明文）<textarea id="mcp-env" rows="3" placeholder="API_KEY="></textarea></label>
             </div>
             <p id="mcp-form-err"></p>
             <div class="ed-actions">
@@ -157,33 +165,46 @@
           </div>
         </div>
         <div id="kb-panel" hidden>
-          <div id="kb-head">
-            <span id="kb-collection-name">未选择知识库</span>
-            <span>
+          <header id="kb-head">
+            <div class="kb-head-text">
+              <span id="kb-collection-name">未选择知识库</span>
+              <p class="editor-hint">先导入资料。状态变成「就绪」后，用下面的检索试一句，确认能被找到。</p>
+            </div>
+            <span class="kb-head-actions">
               <button id="kb-refresh-btn" type="button">刷新</button>
               <button id="kb-reindex-btn" type="button">重建索引</button>
               <button id="kb-export-btn" type="button">导出备份</button>
             </span>
-          </div>
-          <div id="kb-cap-hint" class="editor-hint" hidden></div>
+          </header>
+          <p id="kb-cap-hint" class="editor-hint" hidden></p>
           <div id="kb-status" class="editor-hint"></div>
-          <ul id="kb-doc-list"></ul>
-          <form id="kb-import-form">
-            <div class="form-grid">
-              <label>标题<input id="kb-import-title" type="text" placeholder="文档标题" /></label>
-              <label>链接<input id="kb-url" type="text" placeholder="https://…（导入网页内容）" /></label>
-            </div>
-            <textarea id="kb-import-text" rows="4" placeholder="粘贴文本内容（md / txt）"></textarea>
-            <div>
-              <button id="kb-import-btn" type="submit">导入到当前知识库</button>
-              <button id="kb-file-btn" type="button">从文件导入（PDF / Word / md / txt / html）</button>
-              <button id="kb-url-btn" type="button">导入链接</button>
+          <section class="kb-block">
+            <h2 class="ed-title">文档</h2>
+            <ul id="kb-doc-list"></ul>
+          </section>
+          <form id="kb-import-form" class="kb-card">
+            <h2 class="ed-title">导入</h2>
+            <p class="editor-hint">三选一填入正文：直接粘贴、选择文件，或填写链接后点「读取」。看过文本再点「导入」。</p>
+            <label class="kb-field">标题<input id="kb-import-title" type="text" placeholder="文档标题，方便以后辨认" /></label>
+            <label class="kb-field">正文<textarea id="kb-import-text" rows="5" placeholder="在这里粘贴 Markdown 或纯文本"></textarea></label>
+            <div class="kb-import-actions">
+              <button id="kb-import-btn" type="submit">导入</button>
+              <button id="kb-file-btn" type="button">选择文件</button>
+              <span class="kb-file-hint">PDF、Word、Markdown、txt、html</span>
               <input id="kb-file" type="file" accept=".pdf,.docx,.md,.txt,.markdown,.html,.htm" hidden />
             </div>
+            <div class="kb-url-row">
+              <input id="kb-url" type="text" placeholder="https:// 网页地址" />
+              <button id="kb-url-btn" type="button">读取链接</button>
+            </div>
           </form>
-          <div id="kb-search-box">
-            <input id="kb-search-input" type="text" placeholder="测试检索：输入问题…" />
-            <button id="kb-search-btn" type="button">检索</button>
+          <div id="kb-search-box" class="kb-card">
+            <h2 class="ed-title">试检索</h2>
+            <p class="editor-hint">输入一个问题，看当前库能不能对上。只在这里预览，不会发给星奈。</p>
+            <div class="kb-search-row">
+              <input id="kb-search-input" type="text" placeholder="例如：这份资料里的结论是什么？" />
+              <button id="kb-search-btn" type="button">检索</button>
+            </div>
             <div id="kb-search-results"></div>
           </div>
         </div>

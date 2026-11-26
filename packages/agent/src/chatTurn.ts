@@ -210,7 +210,7 @@ export async function* runSessionChat(input: {
   const injectTexts = injectItems.map((item) => item.text);
   try {
     for await (const event of runtime.chat(runtimeBody, {
-      longTermMemories: injectItems,
+      longTermMemories: intervalId ? [] : injectItems,
       memoryAckTexts: unacked.map((item) => item.text),
       canvasPrompt: input.canvasPrompt,
       signal,

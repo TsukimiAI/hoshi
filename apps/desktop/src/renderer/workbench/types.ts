@@ -196,6 +196,7 @@ export type WorkbenchApi = {
   getSettings: () => Promise<{ plugins: { enabled: string[]; configs: Record<string, Record<string, string>> } } & Record<string, unknown>>;
   saveSettings: (settings: unknown) => Promise<unknown>;
   getTheme: () => Promise<{ tokens: { bg: string; font: string; dialog: string; menu: string; sound: string } } | null>;
+  getWallpaper: () => Promise<string>;
   previewTheme: (tokens: { bg: string; font: string; dialog: string; menu: string } | null) => Promise<{ ok: true }>;
   readThemePack: (id: string) => Promise<{
     name: string;

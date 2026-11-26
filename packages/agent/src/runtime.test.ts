@@ -1924,7 +1924,7 @@ describe("AgentRuntime", () => {
           {
             type: "function",
             function: {
-              name: "list_knowledge",
+              name: "clock",
               description: "list",
               parameters: { type: "object", properties: {} }
             }
