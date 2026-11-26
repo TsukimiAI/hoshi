@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { pipeline } from "node:stream/promises";
+import { once } from "node:events";
 import { Readable } from "node:stream";
 import type { VoiceSettings } from "@hoshi/shared";
 import { encodePcm16MonoWav } from "../audio/wav";
@@ -15,36 +15,191 @@ function modelReady(path: string): boolean {
   return existsSync(path) && statSync(path).size >= MIN_MODEL_BYTES;
 }
 
-export async function ensureWhisperModel(dest: string): Promise<void> {
+function stoppedError(error: unknown, signal?: AbortSignal): boolean {
+  return Boolean(signal?.aborted || (error instanceof Error && error.name === "AbortError"));
+}
+
+function headerTotal(header: string | null): number | null {
+  const match = /\/(\d+)\s*$/.exec(header ?? "");
+  if (!match) {
+    return null;
+  }
+  const total = Number(match[1]);
+  return Number.isFinite(total) ? total : null;
+}
+
+function headerStart(header: string | null): number | null {
+  const match = /bytes\s+(\d+)-/i.exec(header ?? "");
+  if (!match) {
+    return null;
+  }
+  const start = Number(match[1]);
+  return Number.isFinite(start) ? start : null;
+}
+
+function partOffset(tmp: string): number {
+  if (!existsSync(tmp)) {
+    return 0;
+  }
+  const stat = statSync(tmp);
+  return stat.isFile() ? stat.size : 0;
+}
+
+async function writeModelBody(
+  dest: string,
+  tmp: string,
+  body: ReadableStream<Uint8Array>,
+  offset: number,
+  total: number,
+  flags: "w" | "a",
+  onProgress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const file = createWriteStream(tmp, { flags });
+  let loaded = offset;
+  onProgress?.(loaded, total);
+  try {
+    for await (const chunk of Readable.fromWeb(body as never)) {
+      if (signal?.aborted) {
+        throw new Error("已停止下载");
+      }
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+      if (!file.write(buf)) {
+        await once(file, "drain");
+      }
+      loaded += buf.length;
+      onProgress?.(loaded, total);
+    }
+  } finally {
+    await new Promise<void>((resolve) => file.end(() => resolve()));
+  }
+  if (signal?.aborted) {
+    throw new Error("已停止下载");
+  }
+  const size = existsSync(tmp) ? statSync(tmp).size : 0;
+  if (total >= MIN_MODEL_BYTES && size === total) {
+    await rename(tmp, dest);
+    return;
+  }
+  if (total > 0 && size === total) {
+    throw new Error("模型下载不完整");
+  }
+  throw new Error("模型下载不完整");
+}
+
+export async function ensureWhisperModel(
+  dest: string,
+  onProgress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (signal?.aborted) {
+    throw new Error("已停止下载");
+  }
   if (modelReady(dest)) {
     return;
   }
   mkdirSync(dirname(dest), { recursive: true });
   const tmp = `${dest}.part`;
+  if (existsSync(dest) && !modelReady(dest)) {
+    unlinkSync(dest);
+  }
+  const fullRestart = { used: false };
   let last = "";
   for (let i = 0; i < 3; i += 1) {
     try {
-      if (existsSync(tmp)) {
-        unlinkSync(tmp);
-      }
-      if (existsSync(dest) && !modelReady(dest)) {
-        unlinkSync(dest);
-      }
-      const res = await fetch(MODEL_URL, { redirect: "follow" });
-      if (!res.ok || !res.body) {
-        throw new Error(`模型下载失败 ${res.status}`);
-      }
-      await pipeline(Readable.fromWeb(res.body as never), createWriteStream(tmp));
-      if (!existsSync(tmp) || statSync(tmp).size < MIN_MODEL_BYTES) {
-        throw new Error("模型下载不完整");
-      }
-      await rename(tmp, dest);
+      await pullWhisperModel(dest, tmp, fullRestart, onProgress, signal);
       return;
     } catch (error) {
+      if (stoppedError(error, signal)) {
+        throw new Error("已停止下载");
+      }
       last = error instanceof Error ? error.message : "模型下载失败";
     }
   }
   throw new Error(last || "模型下载失败");
+}
+
+async function pullWhisperModel(
+  dest: string,
+  tmp: string,
+  fullRestart: { used: boolean },
+  onProgress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (signal?.aborted) {
+    throw new Error("已停止下载");
+  }
+  const offset = partOffset(tmp);
+  const headers: Record<string, string> = {};
+  if (offset > 0) {
+    headers.Range = `bytes=${offset}-`;
+  }
+  const res = await fetch(MODEL_URL, { headers, redirect: "follow", signal });
+  if (res.status === 416 && offset > 0) {
+    const total = headerTotal(res.headers.get("content-range"));
+    await res.body?.cancel();
+    if (total !== null && offset === total && total >= MIN_MODEL_BYTES) {
+      await rename(tmp, dest);
+      onProgress?.(total, total);
+      return;
+    }
+    await rewriteWhisperModel(dest, tmp, fullRestart, onProgress, signal);
+    return;
+  }
+  if (res.status === 206) {
+    const total = headerTotal(res.headers.get("content-range"));
+    const start = headerStart(res.headers.get("content-range"));
+    if (total === null || start !== offset || !res.body) {
+      await res.body?.cancel();
+      await rewriteWhisperModel(dest, tmp, fullRestart, onProgress, signal);
+      return;
+    }
+    await writeModelBody(dest, tmp, res.body, offset, total, "a", onProgress, signal);
+    return;
+  }
+  if (res.status === 200 && offset > 0) {
+    if (!res.body) {
+      throw new Error("模型下载失败 200");
+    }
+    if (fullRestart.used) {
+      await res.body.cancel();
+      throw new Error("模型下载失败");
+    }
+    fullRestart.used = true;
+    if (existsSync(tmp)) {
+      unlinkSync(tmp);
+    }
+    const total = Number(res.headers.get("content-length")) || 0;
+    await writeModelBody(dest, tmp, res.body, 0, total, "w", onProgress, signal);
+    return;
+  }
+  if (!res.ok || !res.body) {
+    throw new Error(`模型下载失败 ${res.status}`);
+  }
+  const total = Number(res.headers.get("content-length")) || 0;
+  await writeModelBody(dest, tmp, res.body, 0, total, "w", onProgress, signal);
+}
+
+async function rewriteWhisperModel(
+  dest: string,
+  tmp: string,
+  fullRestart: { used: boolean },
+  onProgress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  if (fullRestart.used) {
+    throw new Error("模型下载失败");
+  }
+  fullRestart.used = true;
+  if (existsSync(tmp)) {
+    unlinkSync(tmp);
+  }
+  const res = await fetch(MODEL_URL, { redirect: "follow", signal });
+  if (!res.ok || !res.body) {
+    throw new Error(`模型下载失败 ${res.status}`);
+  }
+  const total = Number(res.headers.get("content-length")) || 0;
+  await writeModelBody(dest, tmp, res.body, 0, total, "w", onProgress, signal);
 }
 
 function pcmRmsInt16(pcm: Buffer): number {

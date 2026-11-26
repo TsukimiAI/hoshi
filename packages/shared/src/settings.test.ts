@@ -6,26 +6,21 @@ describe("resolveHoshiSettings", () => {
     expect(resolveHoshiSettings(null)).toEqual(DEFAULT_HOSHI_SETTINGS);
   });
 
-  it("settings.json 优先于 env，env 优先于默认值", () => {
-    const resolved = resolveHoshiSettings(
-      {
-        model: { apiKey: "from-file", model: "qwen-file" },
-        chat: { contextBudget: 5000 }
-      },
-      {
-        apiKey: "from-env",
-        baseUrl: "https://env.example/v1",
-        model: "env-model"
-      }
-    );
-    expect(resolved.model.apiKey).toBe("from-file");
+  it("已存字段优先，缺省用代码默认值，空 Key 保持空", () => {
+    const resolved = resolveHoshiSettings({
+      model: { apiKey: "", model: "qwen-file" },
+      chat: { contextBudget: 5000, deepseekApiKey: "" }
+    });
+    expect(resolved.model.apiKey).toBe("");
     expect(resolved.model.model).toBe("qwen-file");
-    expect(resolved.model.baseUrl).toBe("https://env.example/v1");
+    expect(resolved.model.baseUrl).toBe(DEFAULT_HOSHI_SETTINGS.model.baseUrl);
     expect(resolved.chat.contextBudget).toBe(5000);
     expect(resolved.chat.compactKeepRecent).toBe(24);
     expect(resolved.chat.referenceSites).toBe("");
     expect(resolved.chat.memoryAutoWrite).toBe(true);
     expect(resolved.chat.deepseekApiKey).toBe("");
+    expect(resolved.chat.searchBaseUrl).toBe(DEFAULT_HOSHI_SETTINGS.chat.searchBaseUrl);
+    expect(resolved.chat.searchModel).toBe(DEFAULT_HOSHI_SETTINGS.chat.searchModel);
     expect(resolved.plugins.enabled).toEqual([]);
     expect(resolved.plugins.configs.web_search).toBeUndefined();
   });
@@ -116,8 +111,6 @@ describe("resolveHoshiSettings", () => {
     expect(resolveHoshiSettings({ chat: { memoryAutoWrite: false } }).chat.memoryAutoWrite).toBe(
       false
     );
-    expect(resolveHoshiSettings(null, { deepseekApiKey: "from-env" }).chat.deepseekApiKey).toBe(
-      "from-env"
-    );
+    expect(resolveHoshiSettings({ chat: { deepseekApiKey: "" } }).chat.deepseekApiKey).toBe("");
   });
 });

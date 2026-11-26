@@ -13,7 +13,9 @@ const chat: ChatSettings = {
   compactKeepRecent: 1,
   referenceSites: "",
   memoryAutoWrite: false,
-  deepseekApiKey: ""
+  deepseekApiKey: "",
+  searchBaseUrl: "",
+  searchModel: ""
 };
 
 describe("buildSessionContext", () => {

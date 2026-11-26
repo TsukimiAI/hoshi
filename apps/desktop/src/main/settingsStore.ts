@@ -1,11 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { safeStorage } from "electron";
-import {
-  resolveHoshiSettings,
-  type HoshiSettings,
-  type SettingsEnvSeed
-} from "@hoshi/shared";
+import { resolveHoshiSettings, type HoshiSettings } from "@hoshi/shared";
 
 export function settingsFilePath(userDataDir: string): string {
   return join(userDataDir, "settings.json");
@@ -41,22 +37,21 @@ function isEnvelope(raw: unknown): raw is { enc: string; payload: string } {
 
 export function loadHoshiSettings(
   userDataDir: string,
-  env: SettingsEnvSeed,
   crypto: SettingsCrypto = cryptoImpl
 ): HoshiSettings {
   const filePath = settingsFilePath(userDataDir);
   if (!existsSync(filePath)) {
-    return resolveHoshiSettings(null, env);
+    return resolveHoshiSettings(null);
   }
   try {
     const raw = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
     if (isEnvelope(raw)) {
       const json = JSON.parse(crypto.decrypt(raw.payload)) as unknown;
-      return resolveHoshiSettings(json, env);
+      return resolveHoshiSettings(json);
     }
-    return resolveHoshiSettings(raw, env);
+    return resolveHoshiSettings(raw);
   } catch {
-    return resolveHoshiSettings(null, env);
+    return resolveHoshiSettings(null);
   }
 }
 

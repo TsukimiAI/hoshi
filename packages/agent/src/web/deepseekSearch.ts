@@ -1,8 +1,5 @@
 import type { WebHit } from "./types";
 
-export const DEEPSEEK_ANTHROPIC_MESSAGES = "https://api.deepseek.com/anthropic/v1/messages";
-export const DEEPSEEK_SEARCH_MODEL = "deepseek-chat";
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -78,9 +75,18 @@ export async function searchDeepSeekOfficial(
   query: string,
   apiKey: string,
   fetchImpl: typeof fetch = fetch,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  endpoint?: { baseUrl?: string; model?: string }
 ): Promise<{ hits: WebHit[]; optionalAnswer: string }> {
-  const response = await fetchImpl(DEEPSEEK_ANTHROPIC_MESSAGES, {
+  const baseUrl = endpoint?.baseUrl?.trim() ?? "";
+  const model = endpoint?.model?.trim() ?? "";
+  if (!baseUrl) {
+    throw new Error("缺少联网模型地址");
+  }
+  if (!model) {
+    throw new Error("缺少联网模型名");
+  }
+  const response = await fetchImpl(baseUrl, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -88,7 +94,7 @@ export async function searchDeepSeekOfficial(
       "anthropic-version": "2023-06-01"
     },
     body: JSON.stringify({
-      model: DEEPSEEK_SEARCH_MODEL,
+      model,
       max_tokens: 1024,
       messages: [{ role: "user", content: `请用网页检索「${query}」。天气类问题必须列出城市、日期、最高温和最低温，有数字就写数字。不要只返回网站导航标题。` }],
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }]

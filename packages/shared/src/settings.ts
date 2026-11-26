@@ -12,6 +12,8 @@ export interface ChatSettings {
   referenceSites: string;
   memoryAutoWrite: boolean;
   deepseekApiKey: string;
+  searchBaseUrl: string;
+  searchModel: string;
 }
 
 export interface PresentationSettings {
@@ -98,13 +100,6 @@ export interface HoshiSettings {
   appearance: AppearanceSettings;
 }
 
-export interface SettingsEnvSeed {
-  apiKey?: string;
-  baseUrl?: string;
-  model?: string;
-  deepseekApiKey?: string;
-}
-
 export const DEFAULT_HOSHI_SETTINGS: HoshiSettings = {
   model: {
     apiKey: "",
@@ -118,7 +113,9 @@ export const DEFAULT_HOSHI_SETTINGS: HoshiSettings = {
     compactKeepRecent: 24,
     referenceSites: "",
     memoryAutoWrite: true,
-    deepseekApiKey: ""
+    deepseekApiKey: "",
+    searchBaseUrl: "",
+    searchModel: ""
   },
   presentation: {
     typeCharMs: 38,
@@ -155,9 +152,9 @@ export const DEFAULT_HOSHI_SETTINGS: HoshiSettings = {
     enabled: true,
     embedding: {
       provider: "dashscope",
-      baseUrl: "",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       apiKey: "",
-      model: "text-embedding-v4"
+      model: ""
     },
     search: {
       topK: 5,
@@ -246,17 +243,10 @@ export function resolveCosyVoicePair(
   return { model: nextModel, voice: nextVoice };
 }
 
-export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {}): HoshiSettings {
+export function resolveHoshiSettings(stored: unknown): HoshiSettings {
   const seeded: HoshiSettings = {
-    model: {
-      apiKey: env.apiKey?.trim() || DEFAULT_HOSHI_SETTINGS.model.apiKey,
-      baseUrl: env.baseUrl?.trim() || DEFAULT_HOSHI_SETTINGS.model.baseUrl,
-      model: env.model?.trim() || DEFAULT_HOSHI_SETTINGS.model.model
-    },
-    chat: {
-      ...DEFAULT_HOSHI_SETTINGS.chat,
-      deepseekApiKey: env.deepseekApiKey?.trim() || DEFAULT_HOSHI_SETTINGS.chat.deepseekApiKey
-    },
+    model: { ...DEFAULT_HOSHI_SETTINGS.model },
+    chat: { ...DEFAULT_HOSHI_SETTINGS.chat },
     presentation: { ...DEFAULT_HOSHI_SETTINGS.presentation },
     plugins: {
       enabled: [],
@@ -264,13 +254,8 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
     },
     voice: { ...DEFAULT_HOSHI_SETTINGS.voice },
     knowledge: {
-      enabled: true,
-      embedding: {
-        provider: "dashscope",
-        baseUrl: env.baseUrl?.trim() || "",
-        apiKey: env.apiKey?.trim() || "",
-        model: "text-embedding-v4"
-      },
+      enabled: DEFAULT_HOSHI_SETTINGS.knowledge.enabled,
+      embedding: { ...DEFAULT_HOSHI_SETTINGS.knowledge.embedding },
       search: { ...DEFAULT_HOSHI_SETTINGS.knowledge.search },
       rerank: { ...DEFAULT_HOSHI_SETTINGS.knowledge.rerank }
     },
@@ -316,7 +301,9 @@ export function resolveHoshiSettings(stored: unknown, env: SettingsEnvSeed = {})
       referenceSites: readString(chat.referenceSites, seeded.chat.referenceSites),
       memoryAutoWrite: readBoolean(chat.memoryAutoWrite, seeded.chat.memoryAutoWrite),
       deepseekApiKey:
-        readString(chat.deepseekApiKey, seeded.chat.deepseekApiKey).trim() || seeded.chat.deepseekApiKey
+        readString(chat.deepseekApiKey, seeded.chat.deepseekApiKey).trim() || seeded.chat.deepseekApiKey,
+      searchBaseUrl: readString(chat.searchBaseUrl, "").trim(),
+      searchModel: readString(chat.searchModel, "").trim()
     },
     presentation: {
       typeCharMs: readPositiveInt(presentation.typeCharMs, seeded.presentation.typeCharMs),
@@ -389,9 +376,10 @@ function resolveKnowledge(value: Record<string, unknown>, seeded: KnowledgeSetti
     enabled: readBoolean(value.enabled, seeded.enabled),
     embedding: {
       provider,
-      baseUrl: readString(embedding.baseUrl, seeded.embedding.baseUrl).trim(),
+      baseUrl:
+        readString(embedding.baseUrl, seeded.embedding.baseUrl).trim() || seeded.embedding.baseUrl,
       apiKey: readString(embedding.apiKey, seeded.embedding.apiKey).trim(),
-      model: readString(embedding.model, seeded.embedding.model).trim() || seeded.embedding.model
+      model: readString(embedding.model, "").trim()
     },
     search: {
       topK: readPositiveInt(search.topK, seeded.search.topK),

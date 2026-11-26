@@ -294,6 +294,49 @@ describe("AgentRuntime", () => {
     });
   });
 
+  it("桌宠问天气时模型不调用工具也会检索", async () => {
+    const executed: string[] = [];
+    const llm = new FakeLlm(["海珠今天多云，26℃到31℃。"], {
+      content: "来源打架，白天 36°，还有 2月10日 13°。",
+      toolCalls: []
+    });
+    const runtime = new AgentRuntime({
+      persona: createPersona(),
+      llm: llm as never,
+      plugins: {
+        tools: () => [
+          {
+            type: "function",
+            function: {
+              name: "web_search",
+              description: "search",
+              parameters: { type: "object", properties: {} }
+            }
+          }
+        ],
+        execute: async (name, args) => {
+          const queries = Array.isArray(args.queries) ? args.queries.join(",") : "";
+          executed.push(`${name}:${queries}`);
+          return "广州海珠区今天多云，26℃到31℃。";
+        }
+      }
+    });
+    const events = [];
+    for await (const event of runtime.chat({ message: "今天广州海珠区天气", history: [] })) {
+      events.push(event);
+    }
+    expect(executed).toEqual(["web_search:今天广州海珠区天气"]);
+    expect(events.find((item) => item.event === "sentence")).toMatchObject({
+      data: { text: "海珠今天多云，26℃到31℃。" }
+    });
+    const systems = (llm.lastStreamMessages as Array<{ role: string; content: string }>).filter(
+      (item) => item.role === "system"
+    );
+    expect(systems.some((item) => item.content.includes("已检索"))).toBe(true);
+    expect(systems.some((item) => item.content.includes("26℃"))).toBe(true);
+    expect(systems.some((item) => item.content.includes("来源打架"))).toBe(false);
+  });
+
   it("桌宠知识库已命中且模型不调工具时不联网", async () => {
     const executed: string[] = [];
     const llm = new FakeLlm(["不会流式。"], { content: "虚存是磁盘上的交换。", toolCalls: [] });

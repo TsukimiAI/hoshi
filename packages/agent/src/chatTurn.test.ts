@@ -64,7 +64,9 @@ describe("runSessionChat abort", () => {
         compactKeepRecent: 24,
         referenceSites: "",
         memoryAutoWrite: false,
-        deepseekApiKey: ""
+        deepseekApiKey: "",
+        searchBaseUrl: "",
+        searchModel: ""
       },
       sessionId: "s",
       message: "hi",
@@ -104,7 +106,9 @@ describe("runSessionChat abort", () => {
         compactKeepRecent: 24,
         referenceSites: "",
         memoryAutoWrite: false,
-        deepseekApiKey: ""
+        deepseekApiKey: "",
+        searchBaseUrl: "",
+        searchModel: ""
       },
       sessionId: "s",
       message: "hi",
@@ -141,7 +145,9 @@ describe("runSessionChat abort", () => {
         compactKeepRecent: 24,
         referenceSites: "",
         memoryAutoWrite: false,
-        deepseekApiKey: ""
+        deepseekApiKey: "",
+        searchBaseUrl: "",
+        searchModel: ""
       },
       sessionId: "s",
       message: "hi",
@@ -181,7 +187,9 @@ describe("runSessionChat abort", () => {
         compactKeepRecent: 24,
         referenceSites: "",
         memoryAutoWrite: false,
-        deepseekApiKey: ""
+        deepseekApiKey: "",
+        searchBaseUrl: "",
+        searchModel: ""
       },
       sessionId: "s",
       message: "hi",
@@ -206,7 +214,9 @@ function settings(memoryAutoWrite: boolean) {
     compactKeepRecent: 24,
     referenceSites: "",
     memoryAutoWrite,
-    deepseekApiKey: ""
+    deepseekApiKey: "",
+    searchBaseUrl: "",
+    searchModel: ""
   };
 }
 

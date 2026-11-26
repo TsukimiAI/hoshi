@@ -266,7 +266,6 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
     sendJson(ws, { type: "final", text, epoch: myEpoch });
     sendJson(ws, { type: "status", phase: "generating", epoch: myEpoch });
     const llm = deps.getLlm();
-    const snap = llm.snapshot();
     const ordinary = await deps.buildHistory(sessionId);
     const turned = deps.applyGlanceInterval
       ? await deps.applyGlanceInterval(sessionId, text, sessionKind, ordinary)
@@ -276,7 +275,7 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
       return;
     }
     const voice = deps.getVoiceSettings();
-    const ds = resolveDashscopeCreds(voice, snap);
+    const ds = resolveDashscopeCreds(voice);
     const speakOn = voice.ttsEnabled !== false;
     ttsPlaying = speakOn;
     let engine: TtsEngine | null = null;
@@ -428,8 +427,8 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
 
   const onPartial = (partial: string): void => sendJson(ws, { type: "partial", text: partial });
 
-  const openFunAsr = async (voice: VoiceSettings, snap: { apiKey: string; baseUrl: string }): Promise<void> => {
-    const ds = resolveDashscopeCreds(voice, snap);
+  const openFunAsr = async (voice: VoiceSettings): Promise<void> => {
+    const ds = resolveDashscopeCreds(voice);
     asr?.close();
     asr = new FunAsrClient(
       ds.apiKey,
@@ -450,7 +449,7 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
         funAsrRestarts += 1;
         void (async () => {
           try {
-            await openFunAsr(deps.getVoiceSettings(), deps.getLlm().snapshot());
+            await openFunAsr(deps.getVoiceSettings());
             sendJson(ws, { type: "status", phase: "listening", asr: "fun-asr", epoch });
           } catch (restartError) {
             const message = restartError instanceof Error ? restartError.message : "fun-asr restart failed";
@@ -506,7 +505,6 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
             return;
           }
           sessionKind = session.kind;
-          const snap = deps.getLlm().snapshot();
           const voice = deps.getVoiceSettings();
           if (voice.ttsBackend === "gpt-sovits" && !gsvWeightsReady) {
             gsvWeightsReady = true;
@@ -523,8 +521,8 @@ async function handleClient(ws: WebSocket, deps: VoiceGatewayDeps): Promise<void
             asr = new WhisperAsrClient(voice, onPartial, onFinal);
             await asr.start();
             sendJson(ws, { type: "status", phase: "listening", asr: "whisper", epoch });
-          } else if (hasDashscopeVoiceKey(voice, snap)) {
-            await openFunAsr(voice, snap);
+          } else if (hasDashscopeVoiceKey(voice)) {
+            await openFunAsr(voice);
             sendJson(ws, { type: "status", phase: "listening", asr: "fun-asr", epoch });
           } else {
             sendJson(ws, { type: "error", message: "请填写百炼语音 Key，或在设置中改用本机 Whisper" });

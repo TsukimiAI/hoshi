@@ -52,6 +52,20 @@ describe("SentenceSplitter", () => {
     expect(file.flush()).toEqual(["下一处。"]);
   });
 
+  it("气温区间和换行不拆开", () => {
+    const splitter = new SentenceSplitter();
+    expect(
+      splitter.push("实时气温各站点不太一致，大概在\n°C之间浮动，老师出门前再看一眼。下一句。")
+    ).toEqual(["实时气温各站点不太一致，大概在°C之间浮动，老师出门前再看一眼。"]);
+    expect(splitter.flush()).toEqual(["下一句。"]);
+
+    const range = new SentenceSplitter();
+    expect(range.push("大概在15~20°C之间浮动，老师出门前再看一眼。下一句。")).toEqual([
+      "大概在15~20°C之间浮动，老师出门前再看一眼。"
+    ]);
+    expect(range.flush()).toEqual(["下一句。"]);
+  });
+
   it("不把版本号小数点当句号", () => {
     const splitter = new SentenceSplitter();
     expect(splitter.push("3.8前瞻的资料已经过时了。8版本日期不确定。")).toEqual([

@@ -26,17 +26,16 @@ personas/default      人设、系统提示、表情立绘
 
 - Node.js 22+（用到 `node:sqlite`）
 - pnpm `9.12.3`（见根 `packageManager`）
-- 可对话的 OpenAI 兼容接口（默认读 `.env`）
+- 可对话的 OpenAI 兼容接口（桌面端在设置页填写密钥）
 
 ```bash
 pnpm install
-cp .env.example .env   # 填 HOSHI_API_KEY / HOSHI_BASE_URL / HOSHI_MODEL
-pnpm dev               # 构建并启动 Electron
+pnpm dev               # 构建并启动 Electron，到设置页填 API Key / Base URL / 模型名
 ```
 
 数据目录：Electron `userData`，库文件 `hoshi.db`。不必起独立数据库进程。
 
-首次语音会拉 Whisper 资源（`apps/desktop` 的 `fetch-whisper`）。知识库嵌入 / rerank / 画布检索等在设置里配，也可写 `HOSHI_DEEPSEEK_API_KEY`。
+首次语音会拉 Whisper 资源（`apps/desktop` 的 `fetch-whisper`）。知识库嵌入 / rerank / 画布检索在设置里配。`pnpm eval:*` 才读仓库 `.env` 的 `HOSHI_API_KEY` / `HOSHI_BASE_URL` / `HOSHI_MODEL`。
 
 ## 常用命令
 

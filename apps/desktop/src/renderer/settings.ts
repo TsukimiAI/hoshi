@@ -8,6 +8,8 @@ type FormSettings = {
     referenceSites: string;
     memoryAutoWrite: boolean;
     deepseekApiKey: string;
+    searchBaseUrl: string;
+    searchModel: string;
   };
   presentation: {
     typeCharMs: number;
@@ -90,10 +92,6 @@ type MemoryItem = {
   meta?: { source?: string; documentTitle?: string } | null;
 };
 
-function memoryAckBadge(ackedAt: string | null | undefined): string {
-  return ackedAt ? "" : "未确认";
-}
-
 type UsageTotals = {
   promptTokens: number;
   completionTokens: number;
@@ -136,7 +134,26 @@ interface SettingsApi {
   restoreMemory: (id: string) => Promise<void>;
   updateMemory: (id: string, text: string) => Promise<MemoryItem>;
   testGsv: (baseUrl: string) => Promise<{ ok: true }>;
-  downloadWhisperModel: () => Promise<{ ok: true; path: string }>;
+  whisperModelStatus: () => Promise<{
+    ready: boolean;
+    partialBytes: number;
+    residualBytes: number;
+    downloading: boolean;
+    loaded: number;
+    total: number;
+  }>;
+  downloadWhisperModel: () => Promise<{
+    ok: true;
+    path: string;
+    skipped: boolean;
+    stopped: boolean;
+    busy: boolean;
+  }>;
+  stopWhisperDownload: () => Promise<{ ok: true }>;
+  deleteWhisperModel: () => Promise<{ ok: boolean; removed: number }>;
+  onWhisperDownloadProgress: (
+    handler: (progress: { loaded: number; total: number }) => void
+  ) => () => void;
   getWallpaper?: () => Promise<string>;
   setWallpaper?: (dataUrl: string) => Promise<{ ok: true }>;
   clearWallpaper?: () => Promise<{ ok: true }>;
@@ -176,194 +193,6 @@ function fixTtsPair(model: string, voice: string): { model: string; voice: strin
 
 function setText(id: string, value: string | number): void {
   (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement).value = String(value);
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function renderUsageTotals(el: HTMLElement, totals: UsageTotals): void {
-  el.innerHTML = `
-    <div class="usage-card"><span>输入</span><strong>${totals.promptTokens}</strong></div>
-    <div class="usage-card"><span>输出</span><strong>${totals.completionTokens}</strong></div>
-    <div class="usage-card"><span>缓存</span><strong>${totals.cachedTokens}</strong></div>
-    <div class="usage-card"><span>合计</span><strong>${totals.totalTokens}</strong></div>
-    <div class="usage-card"><span>轮次</span><strong>${totals.turns}</strong></div>
-  `;
-}
-
-function renderUsageSessions(el: HTMLElement, sessions: UsageSummary["sessions"]): void {
-  if (sessions.length === 0) {
-    el.innerHTML = `<p class="field-hint">暂无用量记录</p>`;
-    return;
-  }
-  el.innerHTML = sessions
-    .map(
-      (item) =>
-        `<div class="usage-session"><span class="usage-session-title">${escapeHtml(item.title)}</span><span>↑${item.promptTokens} ↓${item.completionTokens} · ${item.totalTokens}</span></div>`
-    )
-    .join("");
-}
-
-function usagePurposeLabel(purpose: string): string {
-  if (purpose === "chat") {
-    return "对话";
-  }
-  if (purpose === "tool") {
-    return "工具";
-  }
-  if (purpose === "compact") {
-    return "压缩";
-  }
-  if (purpose === "extract") {
-    return "记忆";
-  }
-  if (purpose === "asr") {
-    return "ASR";
-  }
-  return purpose;
-}
-
-function renderUsagePurpose(
-  el: HTMLElement,
-  byPurpose: UsageSummary["byPurpose"] | undefined
-): void {
-  const order = ["chat", "tool", "compact", "extract", "asr"];
-  if (!byPurpose) {
-    el.innerHTML = "";
-    return;
-  }
-  el.innerHTML = order
-    .map((purpose) => {
-      const item = byPurpose[purpose];
-      const all = item?.all;
-      if (!all) {
-        return "";
-      }
-      return `<div class="usage-session"><span class="usage-session-title">${usagePurposeLabel(purpose)}</span><span>↑${all.promptTokens} ↓${all.completionTokens} · ${all.totalTokens}（今日 ${item.today.totalTokens}）</span></div>`;
-    })
-    .join("");
-}
-
-function memoryKindLabel(kind: string): string {
-  if (kind === "identity") {
-    return "身份";
-  }
-  if (kind === "preference") {
-    return "偏好";
-  }
-  if (kind === "habit") {
-    return "习惯";
-  }
-  if (kind === "agreement") {
-    return "约定";
-  }
-  return "其他";
-}
-
-function renderMemories(memories: MemoryItem[], archived: MemoryItem[]): void {
-  const list = document.getElementById("memory-list") as HTMLDivElement;
-  if (memories.length === 0 && archived.length === 0) {
-    list.innerHTML = `<p class="memory-empty">暂无长期记忆</p>`;
-    return;
-  }
-  const groups = ["identity", "agreement", "preference", "habit", "other"];
-  const activeHtml = groups
-    .map((kind) => {
-      const items = memories.filter((item) => item.kind === kind);
-      if (items.length === 0) {
-        return "";
-      }
-      const cards = items
-        .map(
-          (item) => {
-            const source = item.meta?.source === "knowledge" && item.meta.documentTitle
-              ? `<div class="memory-source">📄 来自《${escapeHtml(item.meta.documentTitle)}》</div>`
-              : "";
-            const ack = memoryAckBadge(item.ackedAt);
-            const ackHtml = ack ? `<span class="memory-ack">${escapeHtml(ack)}</span>` : "";
-            return `<article class="memory-card" data-memory-id="${escapeHtml(item.id)}">
-        <div class="memory-card-body">
-          <div class="memory-kind">${escapeHtml(memoryKindLabel(item.kind))}${ackHtml}</div>
-          <input data-memory-text="${escapeHtml(item.id)}" value="${escapeHtml(item.text)}" />
-          ${source}
-        </div>
-        <div class="memory-card-actions">
-          <button type="button" data-memory-save="${escapeHtml(item.id)}">保存</button>
-          <button type="button" class="memory-delete" data-memory-delete="${escapeHtml(item.id)}">删除</button>
-        </div>
-      </article>`;
-          }
-        )
-        .join("");
-      return `<h2 class="memory-group">${escapeHtml(memoryKindLabel(kind))}</h2>${cards}`;
-    })
-    .join("");
-  const archivedHtml =
-    archived.length === 0
-      ? ""
-      : `<h2 class="memory-group">已删除</h2>${archived
-          .map(
-            (item) => `<article class="memory-card" data-memory-id="${escapeHtml(item.id)}">
-        <div class="memory-card-body">
-          <p>${escapeHtml(item.text)}</p>
-        </div>
-        <div class="memory-card-actions">
-          <button type="button" data-memory-restore="${escapeHtml(item.id)}">恢复</button>
-        </div>
-      </article>`
-          )
-          .join("")}`;
-  list.innerHTML = `${activeHtml}${archivedHtml}`;
-}
-
-function renderPlugins(plugins: PluginMarketItem[]): void {
-  const list = document.getElementById("plugin-list") as HTMLDivElement;
-  if (plugins.length === 0) {
-    list.innerHTML = `<p class="plugin-empty">暂无插件</p>`;
-    return;
-  }
-  list.innerHTML = plugins
-    .map((plugin) => {
-      const source = plugin.source === "builtin" ? "内置" : "本地";
-      const fieldId = plugin.error ? plugin.key : plugin.id;
-      const fields =
-        plugin.enabled && plugin.settingsFields.length > 0
-          ? plugin.settingsFields
-              .map((field) => {
-                const value = escapeHtml(plugin.config[field.key] ?? "");
-                const placeholder = field.placeholder
-                  ? ` placeholder="${escapeHtml(field.placeholder)}"`
-                  : "";
-                if (field.type === "textarea") {
-                  return `<label>${escapeHtml(field.label)}<textarea data-plugin-id="${escapeHtml(fieldId)}" data-field-key="${escapeHtml(field.key)}">${value}</textarea></label>`;
-                }
-                const inputType = field.type === "password" ? "password" : "text";
-                return `<label>${escapeHtml(field.label)}<input type="${inputType}" data-plugin-id="${escapeHtml(fieldId)}" data-field-key="${escapeHtml(field.key)}" value="${value}"${placeholder} /></label>`;
-              })
-              .join("")
-          : "";
-      const error = plugin.error ? `<p class="plugin-error">${escapeHtml(plugin.error)}</p>` : "";
-      const disabled = plugin.error ? " disabled" : "";
-      const checked = plugin.enabled ? " checked" : "";
-      return `<article class="plugin-card" data-plugin-key="${escapeHtml(plugin.key)}">
-        <div class="plugin-card-head">
-          <div>
-            <h2>${escapeHtml(plugin.name)}</h2>
-            <div class="plugin-meta">${source} · ${escapeHtml(plugin.version)}</div>
-            <p class="plugin-desc">${escapeHtml(plugin.description)}</p>
-            ${error}
-          </div>
-          <label class="plugin-toggle"><input type="checkbox" data-plugin-enable="${escapeHtml(plugin.id)}"${checked}${disabled} />启用</label>
-        </div>
-        <div class="plugin-fields">${fields}</div>
-      </article>`;
-    })
-    .join("");
 }
 
 function checkbox(id: string, fallback: boolean): boolean {
@@ -468,12 +297,16 @@ async function bootstrapSettings() {
       list.innerHTML = `<p class="memory-empty">暂无历史壁纸</p>`;
       return;
     }
-    list.innerHTML = items
-      .map(
-        (item) =>
-          `<button type="button" data-wallpaper-history="${item.id}" style="background-image:url(&quot;${item.url}&quot;)" title="使用这张"></button>`
-      )
-      .join("");
+    list.replaceChildren(
+      ...items.map((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.wallpaperHistory = item.id;
+        button.title = "使用这张";
+        button.style.backgroundImage = `url("${item.url}")`;
+        return button;
+      })
+    );
   };
   const fill = (settings: FormSettings): void => {
     lastSettings = settings;
@@ -486,6 +319,8 @@ async function bootstrapSettings() {
     setText("compactKeepRecent", settings.chat.compactKeepRecent);
     setText("referenceSites", settings.chat.referenceSites);
     setText("deepseekApiKey", settings.chat.deepseekApiKey);
+    setText("searchBaseUrl", settings.chat.searchBaseUrl);
+    setText("searchModel", settings.chat.searchModel);
     const autoWrite = document.getElementById("memoryAutoWrite") as HTMLInputElement | null;
     if (autoWrite) {
       autoWrite.checked = settings.chat.memoryAutoWrite === true;
@@ -575,17 +410,102 @@ async function bootstrapSettings() {
   });
 
   const downloadWhisperBtn = document.getElementById("download-whisper") as HTMLButtonElement | null;
-  if (downloadWhisperBtn) {
-    downloadWhisperBtn.addEventListener("click", async () => {
-      status.textContent = "下载 Whisper 模型中";
-      try {
-        const result = await hoshi.downloadWhisperModel();
+  const stopWhisperBtn = document.getElementById("stop-whisper") as HTMLButtonElement | null;
+  const deleteWhisperBtn = document.getElementById("delete-whisper") as HTMLButtonElement | null;
+  const whisperProgress = document.getElementById("whisper-progress") as HTMLProgressElement | null;
+  const paintWhisperBar = (loaded: number, total: number): void => {
+    if (!whisperProgress || total <= 0) {
+      whisperProgress?.classList.add("hidden");
+      return;
+    }
+    whisperProgress.classList.remove("hidden");
+    whisperProgress.max = total;
+    whisperProgress.value = Math.min(loaded, total);
+  };
+  const applyWhisperControls = async (): Promise<void> => {
+    const cache = await hoshi.whisperModelStatus();
+    const hasFile = cache.ready || cache.partialBytes > 0 || cache.residualBytes > 0;
+    if (downloadWhisperBtn) {
+      downloadWhisperBtn.disabled = cache.downloading || cache.ready;
+      downloadWhisperBtn.textContent =
+        !cache.ready && cache.partialBytes > 0 ? "继续下载" : "下载 Whisper 模型";
+    }
+    if (stopWhisperBtn) {
+      stopWhisperBtn.disabled = !cache.downloading;
+    }
+    if (deleteWhisperBtn) {
+      deleteWhisperBtn.disabled = cache.downloading || !hasFile;
+    }
+    if (cache.downloading) {
+      paintWhisperBar(cache.loaded || cache.partialBytes, cache.total);
+      return;
+    }
+    if (!cache.ready && cache.partialBytes > 0) {
+      paintWhisperBar(cache.partialBytes, cache.total);
+      return;
+    }
+    whisperProgress?.classList.add("hidden");
+  };
+  hoshi.onWhisperDownloadProgress(({ loaded, total }) => {
+    paintWhisperBar(loaded, total);
+    if (total > 0) {
+      const pct = Math.min(100, Math.floor((loaded / total) * 100));
+      status.textContent = `下载 Whisper 模型中 ${pct}%`;
+    }
+  });
+  downloadWhisperBtn?.addEventListener("click", async () => {
+    status.textContent = "检查本地模型";
+    downloadWhisperBtn.disabled = true;
+    if (stopWhisperBtn) {
+      stopWhisperBtn.disabled = false;
+    }
+    if (deleteWhisperBtn) {
+      deleteWhisperBtn.disabled = true;
+    }
+    try {
+      const result = await hoshi.downloadWhisperModel();
+      if (result.busy) {
+        status.textContent = "正在下载";
+      } else if (result.stopped) {
+        status.textContent = "已停止";
+      } else if (result.skipped) {
+        status.textContent = "本地已有模型，未下载";
+      } else {
         status.textContent = `已保存 ${result.path}`;
-      } catch (error) {
-        status.textContent = error instanceof Error ? error.message : "下载失败";
       }
-    });
-  }
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : "下载失败";
+    } finally {
+      await applyWhisperControls();
+    }
+  });
+  stopWhisperBtn?.addEventListener("click", async () => {
+    status.textContent = "正在停止";
+    try {
+      await hoshi.stopWhisperDownload();
+      status.textContent = "已停止";
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : "停止失败";
+    } finally {
+      await applyWhisperControls();
+    }
+  });
+  deleteWhisperBtn?.addEventListener("click", async () => {
+    deleteWhisperBtn.disabled = true;
+    status.textContent = "正在删除";
+    try {
+      const result = await hoshi.deleteWhisperModel();
+      status.textContent = result.ok
+        ? result.removed > 0
+          ? "已删除模型"
+          : "没有可删除的文件"
+        : "正在下载，无法删除";
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : "删除失败";
+    } finally {
+      await applyWhisperControls();
+    }
+  });
   const testGsvBtn = document.getElementById("test-gsv") as HTMLButtonElement | null;
   if (testGsvBtn) {
     testGsvBtn.addEventListener("click", async () => {
@@ -705,7 +625,9 @@ async function bootstrapSettings() {
           compactKeepRecent: num("compactKeepRecent"),
           referenceSites: text("referenceSites"),
           memoryAutoWrite: checkbox("memoryAutoWrite", lastSettings?.chat.memoryAutoWrite ?? true),
-          deepseekApiKey: text("deepseekApiKey").trim()
+          deepseekApiKey: text("deepseekApiKey").trim(),
+          searchBaseUrl: text("searchBaseUrl").trim(),
+          searchModel: text("searchModel").trim()
         },
         presentation: {
           typeCharMs: num("typeCharMs"),
@@ -819,6 +741,11 @@ async function bootstrapSettings() {
     void paintTheme();
   } catch (error) {
     status.textContent = error instanceof Error ? error.message : "读取设置失败";
+  }
+  try {
+    await applyWhisperControls();
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : "模型状态读取失败";
   }
   try {
     await loadPlugins();

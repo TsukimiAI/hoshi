@@ -72,10 +72,46 @@ describe("extractWebSearchHits", () => {
 });
 
 describe("searchDeepSeekOfficial", () => {
+  it("没填地址或模型名就报错", async () => {
+    const fetchImpl = async () => new Response("{}", { status: 200 });
+    await expect(searchDeepSeekOfficial("q", "key", fetchImpl, undefined, { baseUrl: "", model: "m" })).rejects.toThrow(
+      "缺少联网模型地址"
+    );
+    await expect(
+      searchDeepSeekOfficial("q", "key", fetchImpl, undefined, { baseUrl: "https://a.example", model: "" })
+    ).rejects.toThrow("缺少联网模型名");
+  });
+
+  it("使用填写的地址和模型名", async () => {
+    let seen: { url: string; model: string } | null = null;
+    await searchDeepSeekOfficial(
+      "q",
+      "key",
+      async (url, init) => {
+        const body = JSON.parse(String(init?.body)) as { model: string };
+        seen = { url: String(url), model: body.model };
+        return new Response(
+          JSON.stringify({
+            content: [{ type: "web_search_tool_result", content: [{ type: "web_search_result", url: "https://a.example", title: "A" }] }]
+          }),
+          { status: 200 }
+        );
+      },
+      undefined,
+      { baseUrl: "https://gateway.example/messages", model: "other-model" }
+    );
+    expect(seen).toEqual({ url: "https://gateway.example/messages", model: "other-model" });
+  });
+
   it("响应没有结果块当作提供方错误", async () => {
     await expect(
-      searchDeepSeekOfficial("q", "key", async () =>
-        new Response(JSON.stringify({ content: [{ type: "text", text: "无" }] }), { status: 200 })
+      searchDeepSeekOfficial(
+        "q",
+        "key",
+        async () =>
+          new Response(JSON.stringify({ content: [{ type: "text", text: "无" }] }), { status: 200 }),
+        undefined,
+        { baseUrl: "https://api.deepseek.com/anthropic/v1/messages", model: "deepseek-chat" }
       )
     ).rejects.toThrow("没有检索结果块");
   });
@@ -176,32 +212,14 @@ describe("WebToolHost", () => {
     const host = new WebToolHost(() => "");
     host.setEnabled(true);
     expect(host.tools().map((tool) => tool.function.name)).toEqual(["web_search", "web_fetch"]);
-    expect(await host.execute("web_search", { query: "天气" })).toContain("缺少 DeepSeek API Key");
+    expect(await host.execute("web_search", { query: "天气" })).toContain("缺少联网 API Key");
   });
 });
 
 describe("resolveDeepseekSearchKey", () => {
-  it("专用密钥优先，否则 DeepSeek Base URL 复用模型密钥", () => {
-    expect(
-      resolveDeepseekSearchKey({
-        deepseekApiKey: "ds",
-        modelApiKey: "model",
-        modelBaseUrl: "https://api.deepseek.com"
-      })
-    ).toBe("ds");
-    expect(
-      resolveDeepseekSearchKey({
-        deepseekApiKey: "",
-        modelApiKey: "model",
-        modelBaseUrl: "https://api.deepseek.com/v1"
-      })
-    ).toBe("model");
-    expect(
-      resolveDeepseekSearchKey({
-        deepseekApiKey: "",
-        modelApiKey: "dash",
-        modelBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      })
-    ).toBe("");
+  it("只用联网自己的密钥", () => {
+    expect(resolveDeepseekSearchKey({ deepseekApiKey: "ds" })).toBe("ds");
+    expect(resolveDeepseekSearchKey({ deepseekApiKey: "" })).toBe("");
+    expect(resolveDeepseekSearchKey({ deepseekApiKey: "  " })).toBe("");
   });
 });

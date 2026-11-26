@@ -3,31 +3,35 @@ import type {
   ChatMessage,
   ChatRequestBody,
   LlmUsage,
-  SentenceEvent,
   UsagePurpose
 } from "@hoshi/shared";
 import { addUsage, imageOnlyUserText, isImageOnlyUserText } from "@hoshi/shared";
-import { toLlmMessages, mergeTimeoutSignal, isAbortTimeout, type LlmCallOptions, type LlmMessage, type StreamChatPart } from "./llm/openai";
+import { toLlmMessages, isAbortTimeout, type LlmCallOptions, type LlmMessage, type StreamChatPart } from "./llm/openai";
 import { historyWithLookback, type ChatImagePayload } from "./chatImages";
 import { PET_SCREEN_FOLLOW_NOTE, PET_SCREEN_SYSTEM_NOTE, userContentWithScreen, type PetTurnScreen } from "./petScreen/content";
-import { resolveSentenceEmotion } from "./emotion";
 import type { PersonaConfig } from "./persona";
 import { parseToolArgs } from "./plugins/parseTool";
-import type { LlmTool } from "./plugins/types";
+import type { LlmTool, PluginHost } from "./plugins/types";
 import { buildMemoryAckPrompt, buildMemoryInjectPrompt, type MemoryInjectLine } from "./memory/inject";
 import { buildSearchSitesPrompt, parseSiteLines, EMOTION_USAGE_PROMPT, PET_ANSWER_PROMPT } from "./searchPrompt";
-import { buildDeskCanvasGuide, buildIntegratePrompt, classifyDeskTurn, DESK_CRITIC_PROMPT, DESK_FORM_PROMPT, DESK_WEB_PROMPT, imageTurnRetrieval, knowledgeHitLooksEmpty, knowledgeRoute, looksLikeLocalKnowledgeQuery, parseDeskCanvasChoice, parseDeskCritic, type DeskCanvasChoice } from "./retrieval/plan";
-import { glossaryExpansions, isKnowledgeHitOnTopic, TERM_ALIASES } from "./knowledge/relevance";
+import { buildDeskCanvasGuide, buildIntegratePrompt, classifyDeskTurn, imageTurnRetrieval, knowledgeHitLooksEmpty, knowledgeRoute, looksLikeLocalKnowledgeQuery, type DeskCanvasChoice } from "./retrieval/plan";
 import { updateCanvasTurn } from "./canvas/tool";
+import { runDeskWeb } from "./runtimeWeb";
+import { chooseDeskForm, emitText, reviewCanvas, streamSentences } from "./runtimeSpeak";
+import {
+  deskContextText,
+  doneEvent,
+  knowledgeExcerptFits,
+  lastCanvasArguments,
+  summarizeToolArgs,
+  timeoutSpeakFallback,
+  toolResultOk,
+  withTimeout
+} from "./runtimeFormat";
 import { formatSearchActivity, humanizeSearchNotes, looksLikeReadableProse } from "./web/notes";
 import { stripFetchPrefix } from "./web/deskRetrieve";
-import { normalizeQueries } from "./web/merge";
-import { hasSpeechContent, SentenceSplitter } from "./sentence";
 
-export interface PluginHost {
-  tools(): LlmTool[];
-  execute(name: string, args: Record<string, unknown>): Promise<string>;
-}
+export type { PluginHost } from "./plugins/types";
 
 export interface LlmClient {
   completeChat(
@@ -172,11 +176,6 @@ export class AgentRuntime {
     let kbBody: string | null = null;
     let webBody: string | null = null;
     let webSearched = false;
-    const webEvents: AgentEvent[] = [];
-    const rememberWeb = (event: AgentEvent): void => {
-      webEvents.push(event);
-    };
-    let webAborted = false;
     const deskContext = desk ? deskContextText(body.history, message) : "";
     let searchQuestion = message.trim();
     const runKb = async (): Promise<void> => {
@@ -196,152 +195,30 @@ export class AgentRuntime {
         kbBody = !desk && !noteQuestion && !knowledgeExcerptFits(context, raw) ? null : raw;
       }
     };
-    const runWeb = async (): Promise<void> => {
-      const plugins = this.config.plugins;
-      const webToolList = tools.filter(
-        (tool) => tool.function.name === "web_search" || tool.function.name === "web_fetch"
-      );
-      if (!(web && webTools && plugins) || webToolList.length === 0) {
+    if (desk && this.config.plugins) {
+      const webRun = await runDeskWeb({
+        message,
+        history: body.history,
+        plugins: this.config.plugins,
+        llm: this.config.llm,
+        tools,
+        web,
+        webTools,
+        referenceSites: this.referenceSites,
+        sessionId,
+        signal: extra?.signal,
+        kbSummarize: kbRoute.kind === "summarize"
+      });
+      webBody = webRun.webBody;
+      webSearched = webRun.webSearched;
+      searchQuestion = webRun.searchQuestion;
+      if (webRun.usage) {
+        turnUsage = addUsage(turnUsage, webRun.usage);
+      }
+      if (webRun.aborted || extra?.signal?.aborted) {
         return;
       }
-      const sitePrompt = buildSearchSitesPrompt(parseSiteLines(this.referenceSites));
-      let pending: LlmMessage[] = [
-        { role: "system", content: DESK_WEB_PROMPT },
-        ...(sitePrompt ? [{ role: "system" as const, content: sitePrompt }] : []),
-        ...toLlmMessages(body.history ?? []),
-        { role: "user", content: message }
-      ];
-      const asked: string[] = [];
-      const pieces: string[] = [];
-      for (let round = 0; round < 6; round += 1) {
-        if (extra?.signal?.aborted) {
-          webAborted = true;
-          return;
-        }
-        let complete: {
-          content: string;
-          toolCalls: Array<{ id: string; name: string; argumentsJson: string }>;
-          usage?: LlmUsage;
-        };
-        try {
-          complete = await withTimeout(
-            this.config.llm.completeChat(pending, webToolList, {
-              timeoutMs: 0,
-              enableSearch: false,
-              purpose: "tool",
-              sessionId
-            }),
-            0,
-            "检索规划超时"
-          );
-        } catch {
-          break;
-        }
-        if (complete.usage) {
-          this.config.llm.noteUsage?.("tool", complete.usage, sessionId);
-          turnUsage = addUsage(turnUsage, complete.usage);
-        }
-        const calls = complete.toolCalls.filter(
-          (call) => call.name === "web_search" || call.name === "web_fetch"
-        );
-        if (calls.length === 0) {
-          break;
-        }
-        const assistantToolCalls = calls.map((call) => ({
-          id: call.id,
-          type: "function" as const,
-          function: { name: call.name, arguments: call.argumentsJson }
-        }));
-        pending = [
-          ...pending,
-          { role: "assistant", content: complete.content || null, tool_calls: assistantToolCalls }
-        ];
-        for (const call of calls) {
-          if (extra?.signal?.aborted) {
-            webAborted = true;
-            return;
-          }
-          const args = parseToolArgs(call.argumentsJson);
-          if (call.name === "web_search") {
-            const queries = normalizeQueries(args);
-            if (Array.isArray(queries)) {
-              for (const query of queries) {
-                if (!asked.includes(query)) {
-                  asked.push(query);
-                }
-              }
-            }
-          }
-          webSearched = true;
-          rememberWeb({
-            event: "progress",
-            data: { phase: "tool_start", name: call.name, detail: summarizeToolArgs(call.argumentsJson) }
-          });
-          const started = Date.now();
-          const result = await withTimeout(
-            plugins.execute(call.name, args),
-            65000,
-            `tool ${call.name} timeout`
-          ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
-          const ok = toolResultOk(call.name, result);
-          pieces.push(result.slice(0, ok ? 4000 : 800));
-          rememberWeb({
-            event: "progress",
-            data: {
-              phase: "tool_done",
-              name: call.name,
-              detail: call.name === "web_search" ? formatSearchActivity(result) : result.slice(0, 800),
-              ok,
-              elapsedMs: Date.now() - started
-            }
-          });
-          pending.push({ role: "tool", tool_call_id: call.id, content: result });
-        }
-      }
-      if (
-        !webSearched &&
-        classifyDeskTurn(message).kind !== "chitchat" &&
-        kbRoute.kind !== "summarize"
-      ) {
-        const query = message.trim().slice(0, 200);
-        if (query) {
-          webSearched = true;
-          asked.push(query);
-          rememberWeb({
-            event: "progress",
-            data: { phase: "tool_start", name: "web_search", detail: query }
-          });
-          const started = Date.now();
-          const result = await withTimeout(
-            plugins.execute("web_search", { queries: [query] }),
-            65000,
-            "tool web_search timeout"
-          ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
-          pieces.push(result.slice(0, 4000));
-          rememberWeb({
-            event: "progress",
-            data: {
-              phase: "tool_done",
-              name: "web_search",
-              detail: formatSearchActivity(result),
-              ok: toolResultOk("web_search", result),
-              elapsedMs: Date.now() - started
-            }
-          });
-        }
-      }
-      if (asked.length > 0) {
-        searchQuestion = asked.join("；").slice(0, 200);
-      }
-      const joined = pieces.join("\n").trim();
-      webBody = joined ? joined.slice(0, 8000) : webSearched ? "没搜到贴合资料" : null;
-    };
-    if (desk) {
-      await runWeb();
-      if (webAborted || extra?.signal?.aborted) {
-        return;
-      }
-      for (const event of webEvents) {
+      for (const event of webRun.events) {
         yield event;
       }
     }
@@ -423,7 +300,7 @@ export class AgentRuntime {
       });
     }
     if (desk && message.trim()) {
-      const chosen = await this.chooseDeskForm(deskContext, searchQuestion, webBody ?? kbBody ?? "", sessionId);
+      const chosen = await chooseDeskForm(this.config.llm, deskContext, searchQuestion, webBody ?? kbBody ?? "", sessionId);
       if (chosen.usage) {
         turnUsage = addUsage(turnUsage, chosen.usage);
       }
@@ -520,13 +397,17 @@ export class AgentRuntime {
               continue;
             }
             if ((complete.content ?? "").trim() && body.workspace !== "desk") {
-              yield {
-                event: "progress",
-                data: { phase: "think_done", elapsedMs: Date.now() - thinkStarted }
-              };
-              yield* this.emitText(complete.content);
-              yield doneEvent(turnUsage);
-              return;
+              const mustSearch =
+                petCanSearch && !webSearched && classifyDeskTurn(message).kind === "live";
+              if (!mustSearch) {
+                yield {
+                  event: "progress",
+                  data: { phase: "think_done", elapsedMs: Date.now() - thinkStarted }
+                };
+                yield* emitText(this.config.persona, complete.content);
+                yield doneEvent(turnUsage);
+                return;
+              }
             }
             break;
           }
@@ -635,8 +516,47 @@ export class AgentRuntime {
         };
       }
     }
+    if (
+      !desk &&
+      petCanSearch &&
+      !webSearched &&
+      classifyDeskTurn(message).kind === "live" &&
+      this.config.plugins
+    ) {
+      const query = message.trim().slice(0, 200);
+      if (query) {
+        webSearched = true;
+        yield {
+          event: "progress",
+          data: { phase: "tool_start", name: "web_search", detail: query }
+        };
+        const started = Date.now();
+        const result = await withTimeout(
+          this.config.plugins.execute("web_search", { queries: [query] }),
+          65000,
+          "tool web_search timeout"
+        ).catch((error) => (error instanceof Error ? error.message : "tool failed"));
+        const ok = toolResultOk("web_search", result);
+        if (ok) {
+          const note = humanizeSearchNotes(result) || result.slice(0, 4000);
+          if (note.trim()) {
+            webBody = [webBody, note].filter(Boolean).join("\n").slice(0, 8000);
+          }
+        }
+        yield {
+          event: "progress",
+          data: {
+            phase: "tool_done",
+            name: "web_search",
+            detail: formatSearchActivity(result),
+            ok,
+            elapsedMs: Date.now() - started
+          }
+        };
+      }
+    }
     if (desk && canvasPlaced && this.config.plugins) {
-      const review = await this.reviewCanvas({
+      const review = await reviewCanvas(this.config.llm, {
         message: searchQuestion || message,
         excerpt: (webBody ?? kbBody ?? "").slice(0, 1200),
         cards: lastCanvasArguments(speakMessages),
@@ -792,7 +712,7 @@ export class AgentRuntime {
           }
           const text = (follow.content ?? "").trim();
           if (text) {
-            for await (const event of this.emitText(text)) {
+            for await (const event of emitText(this.config.persona, text)) {
               spoke += 1;
               yield event;
             }
@@ -802,7 +722,7 @@ export class AgentRuntime {
         }
       }
       if (spoke === 0) {
-        for await (const event of this.streamSentences(
+        for await (const event of streamSentences(this.config.llm, this.config.persona, 
           speakMessages,
           extra?.signal,
           (usage) => {
@@ -846,7 +766,7 @@ export class AgentRuntime {
           }
           const text = (rescue.content ?? "").trim();
           if (text) {
-            for await (const event of this.emitText(text)) {
+            for await (const event of emitText(this.config.persona, text)) {
               spoke += 1;
               yield event;
             }
@@ -865,7 +785,7 @@ export class AgentRuntime {
               : web && !webBody
                 ? "这次网页检索没有拿到可用资料。你可以稍后再问。"
                 : "我这边没有生成成句回复，请再试一次。";
-        for await (const event of this.emitText(fallback)) {
+        for await (const event of emitText(this.config.persona, fallback)) {
           spoke += 1;
           yield event;
         }
@@ -878,7 +798,7 @@ export class AgentRuntime {
       if (isAbortTimeout(error) || (error instanceof Error && /超时/.test(error.message))) {
         if (spoke === 0) {
           const text = timeoutSpeakFallback(webBody);
-          for await (const event of this.emitText(text)) {
+          for await (const event of emitText(this.config.persona, text)) {
             spoke += 1;
             yield event;
           }
@@ -890,317 +810,4 @@ export class AgentRuntime {
     }
   }
 
-  private async chooseDeskForm(
-    context: string,
-    question: string,
-    summary: string,
-    sessionId?: string
-  ): Promise<{ choice: DeskCanvasChoice; usage?: LlmUsage }> {
-    const fallback: DeskCanvasChoice = { canvas: true, images: false, form: "note" };
-    try {
-      const result = await withTimeout(
-        this.config.llm.completeChat(
-          [
-            { role: "system", content: DESK_FORM_PROMPT },
-            { role: "user", content: `上下文：\n${context}\n要查的问题：${question}\n总结：${summary || "无"}` }
-          ],
-          [],
-          { timeoutMs: 30000, enableSearch: false, purpose: "chat", sessionId }
-        ),
-        35000,
-        "版式超时"
-      );
-      if (result.usage) {
-        this.config.llm.noteUsage?.("chat", result.usage, sessionId);
-      }
-      const parsed = parseDeskCanvasChoice(result.content ?? "");
-      if (!parsed) {
-        return { choice: fallback, usage: result.usage };
-      }
-      if (parsed.form === "chart" && !/\d/.test(summary)) {
-        return { choice: { ...parsed, form: "note" }, usage: result.usage };
-      }
-      return { choice: parsed, usage: result.usage };
-    } catch {
-      return { choice: fallback };
-    }
-  }
-
-  private async reviewCanvas(input: {
-    message: string;
-    excerpt: string;
-    cards: string;
-    sessionId?: string;
-  }): Promise<{ fix: string | null; usage?: LlmUsage }> {
-    try {
-      const result = await withTimeout(
-        this.config.llm.completeChat(
-          [
-            { role: "system", content: DESK_CRITIC_PROMPT },
-            {
-              role: "user",
-              content: `问句：${input.message}\n摘录：${input.excerpt || "无"}\n卡片：${input.cards || "无"}`
-            }
-          ],
-          [],
-          { timeoutMs: 30000, enableSearch: false, purpose: "chat", sessionId: input.sessionId }
-        ),
-        35000,
-        "评判超时"
-      );
-      if (result.usage) {
-        this.config.llm.noteUsage?.("chat", result.usage, input.sessionId);
-      }
-      const verdict = parseDeskCritic(result.content ?? "");
-      if (!verdict || verdict.pass) {
-        return { fix: null, usage: result.usage };
-      }
-      return { fix: verdict.fix, usage: result.usage };
-    } catch {
-      return { fix: null };
-    }
-  }
-
-  private async *streamSentences(
-    messages: LlmMessage[],
-    signal?: AbortSignal,
-    onUsage?: (usage: LlmUsage) => void,
-    sessionId?: string,
-    enableSearch = true,
-    timeoutMs = 90000
-  ): AsyncGenerator<AgentEvent> {
-    const splitter = new SentenceSplitter();
-    let index = 0;
-    try {
-      for await (const part of this.config.llm.streamChat(
-        messages,
-        mergeTimeoutSignal(timeoutMs, signal),
-        {
-          purpose: "chat",
-          sessionId,
-          enableSearch
-        }
-      )) {
-        if (signal?.aborted) {
-          return;
-        }
-        if (part.kind === "usage") {
-          onUsage?.(part.usage);
-          continue;
-        }
-        for (const sentence of splitter.push(part.text)) {
-          const event = this.toSentence(sentence, index);
-          if (event) {
-            index += 1;
-            yield event;
-          }
-        }
-      }
-    } catch (error) {
-      if (isAbortTimeout(error) || (error instanceof Error && /超时/.test(error.message))) {
-        /* 口播超时交给外层用摘录补答 */
-      } else {
-        throw error;
-      }
-    }
-    for (const sentence of splitter.flush()) {
-      const event = this.toSentence(sentence, index);
-      if (event) {
-        index += 1;
-        yield event;
-      }
-    }
-  }
-
-  private async *emitText(text: string): AsyncGenerator<AgentEvent> {
-    const splitter = new SentenceSplitter();
-    let index = 0;
-    for (const sentence of splitter.push(text)) {
-      const event = this.toSentence(sentence, index);
-      if (event) {
-        index += 1;
-        yield event;
-      }
-    }
-    for (const sentence of splitter.flush()) {
-      const event = this.toSentence(sentence, index);
-      if (event) {
-        index += 1;
-        yield event;
-      }
-    }
-  }
-
-  private toSentence(sentence: string, index: number): SentenceEvent | null {
-    const parsed = resolveSentenceEmotion(sentence, this.config.persona.defaultEmotion);
-    if (!parsed.text || !hasSpeechContent(parsed.text) || looksLikeInternalCanvasTalk(parsed.text)) {
-      return null;
-    }
-    return {
-      event: "sentence",
-      data: {
-        text: parsed.text,
-        emotion: parsed.emotion,
-        index
-      }
-    };
-  }
-}
-
-function itemTitles(list: unknown): string[] {
-  if (!Array.isArray(list)) {
-    return [];
-  }
-  return list
-    .map((item) => {
-      const rec = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
-      return typeof rec.title === "string" ? rec.title.trim() : "";
-    })
-    .filter(Boolean);
-}
-
-function summarizePageArgs(args: Record<string, unknown>): string | null {
-  const items = Array.isArray(args.items) ? args.items : Array.isArray(args.cards) ? args.cards : null;
-  if (!items) {
-    return null;
-  }
-  const titles = itemTitles(items);
-  if (titles.length) {
-    return `整页 ${items.length} 张：${titles.slice(0, 3).join("、")}`;
-  }
-  return `整页 ${items.length} 张`;
-}
-
-function summarizeToolArgs(argumentsJson: string): string {
-  try {
-    const parsed = JSON.parse(argumentsJson) as Record<string, unknown>;
-    const nested =
-      parsed.arguments && typeof parsed.arguments === "object"
-        ? (parsed.arguments as Record<string, unknown>)
-        : parsed;
-    if (typeof nested.query === "string" && nested.query.trim()) {
-      return nested.query.trim();
-    }
-    if (Array.isArray(nested.queries)) {
-      const queries = nested.queries
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .map((item) => item.trim());
-      if (queries.length) {
-        return queries.slice(0, 4).join("；");
-      }
-    }
-    if (typeof nested.title === "string" && nested.title.trim()) {
-      return nested.title.trim();
-    }
-    const page = summarizePageArgs(nested) ?? summarizePageArgs(parsed);
-    if (page) {
-      return page;
-    }
-    if (typeof nested.url === "string" && nested.url.trim()) {
-      return nested.url.trim();
-    }
-    return JSON.stringify(nested);
-  } catch {
-    return argumentsJson;
-  }
-}
-
-function toolResultOk(name: string, result: string): boolean {
-  if (name === "canvas_put") {
-    return result.startsWith("已放到画布");
-  }
-  if (name === "canvas_set") {
-    return result.startsWith("已更新画布");
-  }
-  if (name === "canvas_remove") {
-    return result.startsWith("已从画布移除");
-  }
-  return !/失败|不可用|缺少|拒绝：/.test(result);
-}
-
-function looksLikeInternalCanvasTalk(text: string): boolean {
-  return /kind=chart|画布拒绝|时效这一页|只认 chart|老师要是拿到逐日|逐日实测记录/.test(text);
-}
-
-function timeoutSpeakFallback(webBody: string | null): string {
-  const raw = (webBody ?? "").trim();
-  if (/没搜到贴合资料|没留下贴合/.test(raw)) {
-    return "这轮检索没有留下和问题贴合的资料。";
-  }
-  const brief = humanizeSearchNotes(raw);
-  if (brief.length >= 24) {
-    return `口播超时了，先按检索到的资料说：${brief.slice(0, 280)}`;
-  }
-  return "回答超时，请再试一次。";
-}
-
-function deskContextText(history: ChatMessage[] | undefined, message: string): string {
-  const lines: string[] = [];
-  for (const item of history ?? []) {
-    const text = item.content.replace(/\s+/g, " ").trim().slice(0, 1500);
-    if (!text) {
-      continue;
-    }
-    if (item.role === "system") {
-      lines.push(text);
-      continue;
-    }
-    if (item.role !== "user" && item.role !== "assistant") {
-      continue;
-    }
-    lines.push(`${item.role === "user" ? "老师" : "星奈"}：${text}`);
-  }
-  const current = `老师：${message.replace(/\s+/g, " ").trim()}`;
-  if (lines.at(-1) !== current) {
-    lines.push(current);
-  }
-  return lines.join("\n");
-}
-
-function lastCanvasArguments(messages: LlmMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (!message || message.role !== "assistant" || !message.tool_calls) {
-      continue;
-    }
-    const call = [...message.tool_calls].reverse().find((item) => item.function.name.startsWith("canvas_"));
-    if (call) {
-      return call.function.arguments;
-    }
-  }
-  return "";
-}
-
-function knowledgeExcerptFits(context: string, excerpt: string): boolean {
-  if (isKnowledgeHitOnTopic(context, excerpt)) {
-    return true;
-  }
-  const expansions = new Set(glossaryExpansions(context));
-  if (expansions.size === 0) {
-    return false;
-  }
-  return TERM_ALIASES.some((item) => expansions.has(item.en) && excerpt.includes(item.zh));
-}
-
-function doneEvent(usage?: LlmUsage): AgentEvent {
-  return usage
-    ? { event: "done", data: { ok: true, usage } }
-    : { event: "done", data: { ok: true } };
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  if (ms <= 0) {
-    return promise;
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(label)), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) {
-      clearTimeout(timer);
-    }
-  }
 }
